@@ -1,0 +1,106 @@
+EquiliBot: System Architecture
+
+EquiliBot is an autonomous treasury rebalancing system for BNB Chain. Its job is to detect liquidity inefficiencies across approved DEXs, simulate a rebalance, validate the action against on-chain policy, and only then submit an execution request through Safe-controlled infrastructure.
+
+Core Principle
+The agent is never an unconstrained treasury signer. It is an intent generator and execution coordinator operating behind explicit policy checks, Safe controls, and simulation gates.
+
+System Model
+EquiliBot is organized into four layers:
+
+1. Observation Layer
+Role: Collect market state and produce candidate opportunities.
+
+Responsibilities:
+- Read pool state from approved BNB Chain DEXs such as PancakeSwap and BiSwap.
+- Read oracle prices from Pyth for independent price validation.
+- Track gas cost, route quality, slippage, and execution timing.
+- Wake the strategy engine only when thresholds are met.
+
+Outputs:
+- Normalized market snapshot
+- Candidate rebalance trigger
+
+2. Strategy Layer
+Role: Decide whether a rebalance is economically rational.
+
+Responsibilities:
+- Compare liquidity conditions across supported venues.
+- Calculate expected slippage reduction and route efficiency.
+- Estimate net benefit after gas and protocol fees.
+- Generate a machine-readable intent with route, amount, limits, and deadline.
+
+Rules:
+- Math first, LLM second.
+- Use deterministic quote/math tooling for pricing.
+- Use the LLM only to reason over structured results, not to invent market data.
+
+Outputs:
+- Rebalance intent
+- Expected execution bounds
+- Human-readable rationale for monitoring and audit trails
+
+3. Verification And Policy Layer
+Role: Prove the proposed action is safe before any execution is attempted.
+
+Responsibilities:
+- Simulate the transaction on a local fork using Anvil or a simulation service such as Tenderly.
+- Reject any transaction that reverts, exceeds slippage bounds, or creates negative expected value.
+- Validate the transaction against on-chain policy using SwapGuard.
+
+SwapGuard policy should enforce:
+- Whitelisted routers only
+- Whitelisted tokens and trading pairs only
+- Per-transaction notional limit
+- Daily aggregate volume limit
+- Maximum slippage / price impact limit
+- Oracle freshness requirement
+- Deadline / expiry validation
+- Authorized caller or module restriction
+- Pause / emergency stop
+
+Outputs:
+- Verified intent
+- Simulation report
+- Policy approval or rejection
+
+4. Execution Layer
+Role: Execute only verified transactions through treasury-controlled infrastructure.
+
+Responsibilities:
+- Use Safe as the treasury control plane.
+- Submit a transaction proposal or module execution request only after simulation and policy validation succeed.
+- Batch approve plus swap operations where safe and supported.
+- Record execution result, failure reason, and final settlement state.
+
+Trust Model:
+- Treasury assets are controlled by Safe directly or by a vault owned by Safe.
+- The agent does not act as a sole signer with unrestricted authority.
+- The agent may be a proposer, an automation service, or a constrained Safe module executor.
+- Safe and SwapGuard together define the execution boundary.
+
+Recommended Execution Flow
+1. Observe approved DEX pools and oracle prices.
+2. Detect a rebalance opportunity above configured thresholds.
+3. Compute route, size, expected gain, and execution limits.
+4. Simulate on a fork and reject unsafe outcomes.
+5. Validate calldata and constraints through SwapGuard.
+6. Submit to Safe for execution through the approved path.
+7. Persist result and expose telemetry to operators.
+
+Reference Components
+- Frontend: Next.js App Router dashboard for treasury status, intent history, policy state, and execution monitoring.
+- Agent Service: TypeScript service responsible for observe-calculate-verify orchestration.
+- Contracts: SwapGuard for policy enforcement and LiquidityVault for treasury asset routing if vault custody is used.
+- Web3 Stack: viem, wagmi, Safe{Core}, PancakeSwap SDK, oracle integrations.
+
+Operational Requirements
+- Full audit trail for every proposed and rejected rebalance
+- Metrics for trigger rate, simulation failures, execution failures, and realized savings
+- Manual pause and operator override path
+- Configurable thresholds per pair, router, and treasury
+
+Non-Goals
+- The LLM does not directly sign raw treasury transactions.
+- The system does not execute on unapproved routers or unsupported tokens.
+- The frontend is not a source of truth for policy; on-chain policy is.

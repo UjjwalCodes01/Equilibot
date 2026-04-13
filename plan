@@ -1,0 +1,41 @@
+# EquiliBot Production Roadmap And Implementation Plan
+
+## Phase 1 Security And On-Chain Foundation
+Objective: Build the legal and technical guardrails before any autonomous strategy execution.
+
+### Contract Development (Foundry)
+- [x] Implement EquiliBotModule.sol (Safe module execution boundary)
+- [x] Implement SwapGuard.sol (on-chain policy engine)
+- [x] Prevent dust swaps with per-token minimum trade amounts
+- [x] Enforce slippage limits with owner-configurable guardrails
+- [x] Enforce daily volume limits with decimal-aware scaling and per-token overrides
+- [x] Enforce strict token isolation in module execution (non-swap tracked token balances cannot decrease)
+- [x] Enforce canonical calldata and Safe-only recipient routing for approved selectors
+- [x] Enforce per-token cooldown (not global agent-level lock)
+
+### Security Testing
+- [x] Achieve 100 percent source coverage in Foundry
+- [x] Maintain fuzz coverage on checkSwap safety invariants
+- [x] Add regression tests for strict isolation, recipient lock, decimal scaling, and cooldown behavior
+
+### Deployment And Verification
+- [x] Deploy to BNB testnet
+- [x] Verify contracts on BscScan
+- [x] Enable module in Safe
+- [x] Validate live on-chain configuration against policy settings
+
+## Phase 2 Intelligence Engine
+Status: Blocked until any new Phase 1 findings are patched and re-validated.
+
+## Phase 3 Autonomous Execution
+Status: Blocked until Phase 2 is complete.
+
+## Phase 4 Production Dashboard
+Status: Blocked until Phase 3 is complete.
+
+## Production-Ready Checklist
+- [x] Phase 1 contracts hardened and validated on testnet
+- [x] Source coverage at 100 percent across policy and module contracts
+- [ ] Executor key moved to managed signer (KMS/HSM) for production
+- [ ] RPC retry and rate-limit strategy integrated in agent service runtime
+- [ ] Final external security review sign-off
