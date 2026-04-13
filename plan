@@ -25,7 +25,7 @@ Objective: Build the legal and technical guardrails before any autonomous strate
 - [x] Validate live on-chain configuration against policy settings
 
 ## Phase 2 Intelligence Engine
-Status: Blocked until any new Phase 1 findings are patched and re-validated.
+Status: Complete. Agent implements Observe-Calculate-Verify-Execute loop with full Anvil simulation.
 
 ## Phase 3 Autonomous Execution
 Status: Blocked until Phase 2 is complete.
@@ -36,6 +36,7 @@ Status: Blocked until Phase 3 is complete.
 ## Production-Ready Checklist
 - [x] Phase 1 contracts hardened and validated on testnet
 - [x] Source coverage at 100 percent across policy and module contracts
+- [x] Mainnet startup hard-blocked unless managed signer mode and security review attestation are configured
 - [ ] Executor key moved to managed signer (KMS/HSM) for production
-- [ ] RPC retry and rate-limit strategy integrated in agent service runtime
+- [x] RPC retry and rate-limit strategy integrated in agent service runtime
 - [ ] Final external security review sign-off
