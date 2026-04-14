@@ -32,6 +32,7 @@ import { MetricsCollector } from './services/metrics-collector.js'
 import { TelemetryServer } from './services/telemetry-server.js'
 import { RebalanceDetector } from './strategy/rebalance-detector.js'
 import { IntentBuilder } from './strategy/intent-builder.js'
+import { AutonomousTaskRunner } from './strategy/autonomous-task-runner.js'
 import { checkProfitability } from './strategy/profitability.js'
 import { validatePreSubmit, type ExecutionMode } from './strategy/runtime-policy.js'
 import { CircuitBreaker } from './utils/circuit-breaker.js'
@@ -229,6 +230,27 @@ async function main(): Promise<void> {
     poolToPair.set(pair.poolAddress, pair)
   }
 
+  const taskRunner = new AutonomousTaskRunner({
+    config,
+    executionMode,
+    pairs,
+    getPoolState: (poolAddress: Address) => observer.getPoolState(poolAddress),
+    oracleService,
+    gasService,
+    balanceService,
+    quoteService,
+    intentBuilder,
+    policyService,
+    guardOracleService,
+    simulationService,
+    executionService,
+    auditStore,
+    metrics: metricsCollector,
+    circuitBreaker,
+    alertService,
+    riskMonitor,
+  })
+
   // 9. Start services
   await gasService.start()
 
@@ -240,6 +262,7 @@ async function main(): Promise<void> {
     executionMode,
     pairsWatched: pairs.length,
     chainId: config.CHAIN_ID,
+    taskRunner,
   })
   telemetryServer.setPolicyCache({
     maxSlippageBps: policyParams.maxSlippageBps,
@@ -247,6 +270,7 @@ async function main(): Promise<void> {
     cooldownSeconds: policyParams.cooldownSeconds.toString(),
   })
   await telemetryServer.start()
+  taskRunner.start()
 
   let rpcHealthCheckInFlight = false
   const rpcHealthInterval = setInterval(() => {
@@ -333,6 +357,7 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     log.status('PAUSED', 'Shutting down...')
     observer.stop()
+    taskRunner.stop()
     gasService.stop()
     clearInterval(rpcHealthInterval)
     await telemetryServer.stop()

@@ -64,7 +64,7 @@ import { useSwapIntent } from "@/hooks/useSwapIntent";
 import { SwapIntentForm } from "./swap-intent-form";
 import { SwapSimulation } from "./swap-simulation";
 import { SwapExecution } from "./swap-execution";
-import { AutonomousTaskRunner, RapidCommandDeck } from "./action-lab";
+import { AutonomousTaskRunner } from "./action-lab";
 import {
   GlassPanel as GlassPanelUI,
   StatCard as StatCardUI,
@@ -554,36 +554,103 @@ function AuditList({ data }: Readonly<{ data?: GovernanceAuditData }>) {
 function SafetyVaultView({ data }: Readonly<{ data?: SafetyVaultData }>) {
   const permissions = data?.permissions ?? [];
 
+  const formatGuardrailValue = (value: string): { primary: string; unit?: string } => {
+    const match = value.trim().match(/^([0-9]+(?:\.[0-9]+)?)(\s*[a-zA-Z%]+)?$/);
+    if (!match) {
+      return { primary: value };
+    }
+
+    const numeric = Number(match[1]);
+    const formatted = Number.isFinite(numeric) ? numeric.toLocaleString() : match[1];
+    const unit = match[2]?.trim();
+    return { primary: formatted, unit };
+  };
+
+  const truncateMiddle = (value: string, start = 8, end = 6): string => {
+    if (value.length <= start + end + 4) {
+      return value;
+    }
+    return `${value.slice(0, start)}....${value.slice(-end)}`;
+  };
+
+  const guardrailTone = (label: string, value: string): "critical" | "normal" | "warning" => {
+    const normalizedLabel = label.toLowerCase();
+    const normalizedValue = value.toLowerCase();
+
+    if (normalizedValue.includes("pending") || normalizedValue.includes("unavailable")) {
+      return "warning";
+    }
+
+    if (normalizedLabel.includes("kill") || normalizedLabel.includes("pause")) {
+      return normalizedValue.includes("paused") || normalizedValue.includes("armed") ? "critical" : "normal";
+    }
+
+    return "normal";
+  };
+
   return (
-    <div className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
-      <GlassPanel title="Gnosis Safe control surface" subtitle="Module permissions and guardrails appear here from live reads.">
-        <div className="space-y-4">
-          <div className="rounded-3xl border border-amber-400/25 bg-amber-400/10 p-5 text-center">
-            <p className="text-xs uppercase tracking-[0.3em] text-amber-100/70">Kill switch</p>
-            <p className="mt-2 font-serif text-3xl text-amber-50">{data?.killSwitch ?? "Unknown"}</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+    <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+      <GlassPanel title="Permissions matrix" subtitle="Live signer and module permissions should be rendered from on-chain reads.">
+        {permissions.length ? (
+          <div className="space-y-3">
             {permissions.map((permission) => (
-              <div key={permission.label} className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <div key={permission.label} className="rounded-2xl border border-white/10 bg-black/25 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-sm font-medium text-stone-50">{permission.label}</p>
-                  <span className={permission.enabled ? "text-emerald-300" : "text-zinc-500"}>{permission.enabled ? "Enabled" : "Disabled"}</span>
+                  <span className={cx("rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em]", permission.enabled ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100" : "border-red-400/30 bg-red-400/10 text-red-100")}>{permission.enabled ? "enabled" : "disabled"}</span>
                 </div>
                 {permission.detail ? <p className="mt-2 text-sm leading-6 text-zinc-400">{permission.detail}</p> : null}
               </div>
             ))}
           </div>
-        </div>
+        ) : (
+          <EmptyState title="No permissions connected" detail="Read module and Safe permissions live to populate this matrix." />
+        )}
       </GlassPanel>
 
       <GlassPanel title="Active guardrails" subtitle="Policy values are rendered as live state, not copy-pasted into the UI.">
         {data?.guardrails?.length ? (
           <div className="grid gap-3 md:grid-cols-2">
             {data.guardrails.map((guardrail) => (
-              <div key={guardrail.label} className="rounded-2xl border border-white/10 bg-black/25 p-4">
-                <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">{guardrail.label}</p>
-                <p className="mt-2 text-lg text-stone-50">{guardrail.value}</p>
+              (() => {
+                const tone = guardrailTone(guardrail.label, guardrail.value);
+                const formatted = formatGuardrailValue(guardrail.value);
+                const compactPrimary = truncateMiddle(formatted.primary, 9, 6);
+
+                return (
+              <div
+                key={guardrail.label}
+                className={cx(
+                  "rounded-2xl border p-4 transition",
+                  tone === "critical" && "border-red-400/30 bg-red-500/10",
+                  tone === "warning" && "border-amber-400/30 bg-amber-500/10",
+                  tone === "normal" && "border-emerald-400/20 bg-emerald-500/5",
+                )}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-400">{guardrail.label}</p>
+                  <span
+                    className={cx(
+                      "rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.2em]",
+                      tone === "critical" && "border-red-300/40 bg-red-500/20 text-red-100",
+                      tone === "warning" && "border-amber-300/40 bg-amber-500/20 text-amber-100",
+                      tone === "normal" && "border-emerald-300/30 bg-emerald-500/15 text-emerald-100",
+                    )}
+                  >
+                    {tone}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-baseline gap-2">
+                  <p className="max-w-full overflow-hidden text-ellipsis whitespace-nowrap font-serif text-2xl text-stone-50" title={formatted.primary}>
+                    {compactPrimary}
+                  </p>
+                  {formatted.unit ? (
+                    <span className="text-sm uppercase tracking-[0.2em] text-zinc-300">{formatted.unit}</span>
+                  ) : null}
+                </div>
               </div>
+                );
+              })()
             ))}
           </div>
         ) : (
@@ -728,6 +795,157 @@ function ThinkingState({ animationData }: Readonly<{ animationData?: unknown }>)
   return <Lottie animationData={animationData as object} loop className="h-40" />;
 }
 
+function TaskLogicProofPanel() {
+  const [loading, setLoading] = useState(true);
+  const [proof, setProof] = useState<null | {
+    taskId: string;
+    state: string;
+    trigger: string;
+    message: string;
+    timestamp: number;
+    pairId: string | null;
+    intentId: string | null;
+    txHash: string | null;
+    details: Record<string, unknown>;
+  }>(null);
+
+  const txBaseUrl = process.env.NEXT_PUBLIC_BSCSCAN_TX_BASE_URL ?? "https://testnet.bscscan.com/tx/";
+
+  useEffect(() => {
+    let mounted = true;
+
+    fetch("/api/agent/tasks/latest", { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json()) as {
+          enabled?: boolean;
+          proof?: NonNullable<typeof proof>;
+        };
+
+        if (!mounted) {
+          return;
+        }
+
+        if (body.enabled && body.proof) {
+          setProof(body.proof);
+        } else {
+          setProof(null);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setProof(null);
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  return (
+    <GlassPanel title="Task Transparency" subtitle="Observe → Calculate → Verify → Execute proof for the latest autonomous action.">
+      {loading ? (
+        <p className="text-sm text-zinc-400">Loading latest logic proof...</p>
+      ) : !proof ? (
+        <EmptyState
+          title="No executed task proof yet"
+          detail="Run one of the autonomous tasks to populate Observe, Calculate, Verify, Execute evidence from live backend telemetry."
+        />
+      ) : (
+        <div className="space-y-3 text-sm">
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Task</p>
+            <p className="mt-1 text-zinc-100">{proof.taskId}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">State</p>
+            <p className="mt-1 text-zinc-100">{proof.state}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Trigger</p>
+            <p className="mt-1 text-zinc-100">{proof.trigger}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Action</p>
+            <p className="mt-1 text-zinc-100">{proof.message}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Observe: Imbalance detected</p>
+            <p className="mt-1 text-zinc-100">{typeof proof.details?.imbalanceDetected === "string" ? proof.details.imbalanceDetected : "No imbalance record available"}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Calculate: Strategy step plan</p>
+            <p className="mt-1 text-zinc-100">
+              {proof.details?.executionPlan && typeof proof.details.executionPlan === "object"
+                ? JSON.stringify(proof.details.executionPlan)
+                : typeof proof.details?.action === "string"
+                  ? proof.details.action
+                  : "No composed plan emitted"}
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Verify: Simulation results</p>
+            <p className="mt-1 text-zinc-100">{typeof proof.details?.simulationResults === "string" ? proof.details.simulationResults : "No simulation output available"}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Verify: Guardrail check</p>
+            <p className="mt-1 text-zinc-100">{typeof proof.details?.guardrailCheck === "string" ? proof.details.guardrailCheck : "No guardrail check available"}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Pair and intent</p>
+            <p className="mt-1 text-zinc-100">{proof.pairId ?? "n/a"}</p>
+            <p className="mt-1 font-mono text-xs text-zinc-400">{proof.intentId ?? "No intent id"}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Execute: On-chain ID</p>
+            <p className="mt-1 font-mono text-zinc-100">{proof.txHash ?? "No transaction hash"}</p>
+            {proof.txHash ? (
+              <a
+                href={`${txBaseUrl}${proof.txHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-block text-xs text-amber-200 underline decoration-amber-300/40 underline-offset-4"
+              >
+                View on BscScan
+              </a>
+            ) : null}
+            <p className="mt-1 text-xs text-zinc-500">Updated {new Date(proof.timestamp).toLocaleString()}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Burn / LP settlement plan</p>
+            <p className="mt-1 text-zinc-100">{
+              proof.details?.settlementPlan && typeof proof.details.settlementPlan === "object"
+                  ? JSON.stringify(proof.details.settlementPlan)
+                  : "No settlement plan emitted for this run"
+            }</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Implementation guide: Observe function</p>
+            <pre className="mt-2 overflow-x-auto rounded-xl border border-white/10 bg-black/35 p-3 text-xs leading-6 text-zinc-300">{`async function observeMarketState(pairAddress: string) {
+  const reserves = await getReserves(pairAddress)
+  const price = await pythOracle.getPrice(pairAddress)
+  return { reserves, price }
+}`}</pre>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-black/25 p-3">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Implementation guide: Execute multisend</p>
+            <pre className="mt-2 overflow-x-auto rounded-xl border border-white/10 bg-black/35 p-3 text-xs leading-6 text-zinc-300">{`const transactions = [
+  { to: PANCAKE_ROUTER, value: 0, data: encodeSwapData(tokenIn, tokenOut, amountIn) },
+  // withdraw + deposit steps for migration can be appended here
+]
+await safeSdk.createTransaction({ transactions, onlyCalls: true })`}</pre>
+          </div>
+        </div>
+      )}
+    </GlassPanel>
+  );
+}
+
 export function NexusPage() {
   const data = useDashboardData("nexus");
 
@@ -751,6 +969,8 @@ export function NexusPage() {
       </div>
 
       <AutonomousTaskRunner />
+
+      <TaskLogicProofPanel />
 
       <div className="grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
         <GlassPanel title="Thinking state" subtitle="Lottie slot for the real agent thinking animation asset.">
@@ -1102,10 +1322,7 @@ export function TerminalPage() {
       title="Advanced view"
       description="A keyboard-first, high-density surface for raw RPC logs and agentic system health."
     >
-      <div className="space-y-6">
-        <RapidCommandDeck />
-        <TerminalView data={data} />
-      </div>
+      <TerminalView data={data} />
     </PageFrame>
   );
 }

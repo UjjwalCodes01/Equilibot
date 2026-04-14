@@ -65,6 +65,24 @@ const envSchema = z.object({
   CANARY_MAX_TRADE_USD: z.coerce.number().min(1).default(50),
   RUNTIME_MAX_NOTIONAL_USD: z.coerce.number().min(0).default(0), // 0 = disabled
 
+  // Autonomous strategy runner
+  ENABLE_AUTONOMOUS_TASKS: z.coerce.boolean().default(true),
+  AUTONOMOUS_TASK_TICK_MS: z.coerce.number().int().min(1000).default(15000),
+  TASK_REBALANCE_INTERVAL_MS: z.coerce.number().int().min(30000).default(5 * 60 * 1000),
+  TASK_REBALANCE_DRIFT_BPS: z.coerce.number().int().min(10).default(150),
+  TASK_REBALANCE_SHARE_BPS: z.coerce.number().int().min(100).max(10000).default(3000),
+  TASK_MIGRATION_INTERVAL_MS: z.coerce.number().int().min(60000).default(30 * 60 * 1000),
+  TASK_ROUTE_IMPROVEMENT_BPS: z.coerce.number().int().min(1).default(25),
+  TASK_MIGRATION_SHARE_BPS: z.coerce.number().int().min(100).max(10000).default(1000),
+  TASK_BUYBACK_INTERVAL_MS: z.coerce.number().int().min(60000).default(45 * 60 * 1000),
+  TASK_BUYBACK_MIN_STABLE_USD: z.coerce.number().int().min(1).default(250),
+  TASK_BUYBACK_SHARE_BPS: z.coerce.number().int().min(100).max(10000).default(2000),
+  TASK_BURN_ADDRESS: addressSchema.default('0x000000000000000000000000000000000000dEaD'),
+  TASK_HARVEST_INTERVAL_MS: z.coerce.number().int().min(60 * 60 * 1000).default(24 * 60 * 60 * 1000),
+  TASK_MIN_HARVEST_UNITS: z.coerce.bigint().min(1n).default(100000000000000000n),
+  TASK_HARVEST_REINVEST_BPS: z.coerce.number().int().min(100).max(10000).default(6000),
+  TASK_MAX_NOTIONAL_USD: z.coerce.number().int().min(1).default(1000),
+
   // Telemetry
   TELEMETRY_PORT: z.coerce.number().int().min(1024).max(65535).default(9100),
   TELEMETRY_BIND_ADDRESS: z.string().default('127.0.0.1'),

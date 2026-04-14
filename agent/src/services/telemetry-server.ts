@@ -1,15 +1,17 @@
 /**
- * EquiliBot Agent — Telemetry Server
+ * EquiliBot Agent - Telemetry Server
  *
  * Lightweight HTTP API for dashboard consumption using Node built-in http.
  * No Express dependency. Runs on a configurable port (default 9100).
  *
  * Endpoints:
- *   GET /api/status   — agent status, execution mode, circuit breaker, uptime
- *   GET /api/metrics  — rolling counters from MetricsCollector
- *   GET /api/audit    — paginated NDJSON audit entries (?date=YYYY-MM-DD&limit=100&offset=0)
- *   GET /api/policy   — cached on-chain policy params
- *   GET /health       — simple liveness check
+ *   GET /api/status       - agent status, execution mode, circuit breaker, uptime
+ *   GET /api/metrics      - rolling counters from MetricsCollector
+ *   GET /api/audit        - paginated NDJSON audit entries (?date=YYYY-MM-DD&limit=100&offset=0)
+ *   GET /api/policy       - cached on-chain policy params
+ *   GET /api/tasks/status - autonomous strategy task status
+ *   GET /api/tasks/latest - latest task proof (optional ?taskId=...)
+ *   GET /health           - simple liveness check
  */
 
 import http from 'http'
@@ -18,6 +20,8 @@ import type { MetricsCollector } from './metrics-collector.js'
 import type { AuditStore } from './audit-store.js'
 import type { CircuitBreaker } from '../utils/circuit-breaker.js'
 import type { ExecutionMode } from '../strategy/runtime-policy.js'
+import type { AutonomousTaskRunner } from '../strategy/autonomous-task-runner.js'
+import { isAutonomousTaskId } from '../strategy/autonomous-task-runner.js'
 
 const log = createLogger('telemetry')
 
@@ -28,6 +32,7 @@ export interface TelemetryDeps {
   readonly executionMode: ExecutionMode
   readonly pairsWatched: number
   readonly chainId: number
+  readonly taskRunner?: AutonomousTaskRunner
 }
 
 export class TelemetryServer {
@@ -92,20 +97,14 @@ export class TelemetryServer {
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    // CORS headers for dashboard
     res.setHeader('Access-Control-Allow-Origin', this.allowedOrigin)
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     res.setHeader('Content-Type', 'application/json')
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204)
       res.end()
-      return
-    }
-
-    if (req.method !== 'GET') {
-      this.json(res, 405, { error: 'Method not allowed' })
       return
     }
 
@@ -121,25 +120,46 @@ export class TelemetryServer {
     }
 
     try {
-      switch (path) {
-        case '/health':
-          this.json(res, 200, { status: 'ok', uptime: Date.now() - this.startedAt })
-          break
-        case '/api/status':
-          this.handleStatus(res)
-          break
-        case '/api/metrics':
-          this.handleMetrics(res)
-          break
-        case '/api/audit':
-          this.handleAudit(res, url)
-          break
-        case '/api/policy':
-          this.handlePolicy(res)
-          break
-        default:
-          this.json(res, 404, { error: 'Not found' })
+      if (req.method === 'GET') {
+        switch (path) {
+          case '/health':
+            this.json(res, 200, { status: 'ok', uptime: Date.now() - this.startedAt })
+            break
+          case '/api/status':
+            this.handleStatus(res)
+            break
+          case '/api/metrics':
+            this.handleMetrics(res)
+            break
+          case '/api/audit':
+            this.handleAudit(res, url)
+            break
+          case '/api/policy':
+            this.handlePolicy(res)
+            break
+          case '/api/tasks/status':
+            this.handleTaskStatus(res)
+            break
+          case '/api/tasks/latest':
+            this.handleTaskLatest(res, url)
+            break
+          default:
+            this.json(res, 404, { error: 'Not found' })
+        }
+        return
       }
+
+      if (req.method === 'POST') {
+        if (path === '/api/tasks/run') {
+          void this.handleTaskRun(req, res)
+          return
+        }
+
+        this.json(res, 404, { error: 'Not found' })
+        return
+      }
+
+      this.json(res, 405, { error: 'Method not allowed' })
     } catch (error) {
       log.error({ stage: 'SYSTEM', error, path }, 'Telemetry request error')
       this.json(res, 500, { error: 'Internal server error' })
@@ -186,7 +206,6 @@ export class TelemetryServer {
     const limit = Math.min(parseInt(url.searchParams.get('limit') ?? '100', 10), 500)
     const offset = parseInt(url.searchParams.get('offset') ?? '0', 10)
 
-    // Read entries synchronously from audit store
     const entries = this.deps.auditStore.readAuditEntriesSync(date!, limit, offset)
     this.json(res, 200, { date, limit, offset, count: entries.length, entries })
   }
@@ -200,6 +219,102 @@ export class TelemetryServer {
       ...this.policyCache,
       cachedAt: this.policyCacheUpdatedAt,
     })
+  }
+
+  private handleTaskStatus(res: http.ServerResponse): void {
+    if (!this.deps) {
+      this.json(res, 503, { error: 'Agent not yet initialized' })
+      return
+    }
+
+    if (!this.deps.taskRunner) {
+      this.json(res, 200, { enabled: false, tasks: [] })
+      return
+    }
+
+    this.json(res, 200, {
+      enabled: true,
+      tasks: this.deps.taskRunner.getTaskStatuses(),
+    })
+  }
+
+  private handleTaskLatest(res: http.ServerResponse, url: URL): void {
+    if (!this.deps) {
+      this.json(res, 503, { error: 'Agent not yet initialized' })
+      return
+    }
+
+    if (!this.deps.taskRunner) {
+      this.json(res, 200, { enabled: false, proof: null })
+      return
+    }
+
+    const taskIdQuery = url.searchParams.get('taskId')
+    const taskId = taskIdQuery && isAutonomousTaskId(taskIdQuery)
+      ? taskIdQuery
+      : undefined
+
+    const proof = this.deps.taskRunner.getLatestProof(taskId)
+
+    this.json(res, 200, {
+      enabled: true,
+      proof,
+    })
+  }
+
+  private async handleTaskRun(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!this.deps) {
+      this.json(res, 503, { error: 'Agent not yet initialized' })
+      return
+    }
+
+    if (!this.deps.taskRunner) {
+      this.json(res, 501, { error: 'Autonomous task runner not configured' })
+      return
+    }
+
+    const payload = await this.readJsonBody(req)
+    const taskId = typeof payload?.taskId === 'string' ? payload.taskId : null
+
+    if (!taskId || !isAutonomousTaskId(taskId)) {
+      this.json(res, 400, {
+        error: 'Invalid taskId',
+        message: 'taskId must be one of delta-neutral-rebalance, convex-lp-migration, protocol-buyback-burn, yield-harvest-reinvest',
+      })
+      return
+    }
+
+    const proof = await this.deps.taskRunner.runTask(taskId, 'MANUAL')
+    this.json(res, 200, {
+      status: 'accepted',
+      taskId,
+      state: proof.state,
+      message: proof.message,
+      proof,
+    })
+  }
+
+  private async readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+    const chunks: Buffer[] = []
+
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+
+    const raw = Buffer.concat(chunks).toString('utf-8').trim()
+    if (!raw) {
+      return {}
+    }
+
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, unknown>
+      }
+      return {}
+    } catch {
+      return {}
+    }
   }
 
   private json(res: http.ServerResponse, status: number, body: unknown): void {

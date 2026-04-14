@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useAccount } from "wagmi";
-import { Activity, Bot, Braces, Cpu, Shield, TerminalSquare, Zap } from "lucide-react";
+import { Activity, Bot, Cpu, Shield } from "lucide-react";
 import { GlassPanel } from "./ui-components";
 
 type TaskDefinition = {
@@ -15,80 +15,38 @@ type TaskDefinition = {
   stages: string[];
 };
 
-type CommandDefinition = {
-  id: string;
-  label: string;
-  command: string;
-  detail: string;
-};
-
 const TASKS: TaskDefinition[] = [
   {
-    id: "multi-route-hunt",
-    title: "Multi-route liquidity hunt",
-    detail: "Scans approved DEX venues, ranks path quality, then drafts the strongest route bundle.",
+    id: "delta-neutral-rebalance",
+    title: "Delta-Neutral Rebalancer",
+    detail: "Trigger: native token strength >10% or stable reserve under threshold. Action: lock profit into FDUSD/USDC.",
     etaSeconds: 18,
-    risk: "low",
-    stages: ["Collecting pool states", "Ranking route quality", "Building Safe-ready bundle", "Writing proof artifact"],
+    risk: "medium",
+    stages: ["Observe reserve drift", "Calculate rebalance size", "Verify slippage + limits", "Execute Safe module swap"],
   },
   {
-    id: "treasury-rebalance-burst",
-    title: "Treasury rebalance burst",
-    detail: "Creates a batched rebalance plan with slippage caps, deadlines, and notional checks.",
+    id: "convex-lp-migration",
+    title: "Convex Liquidity Migration",
+    detail: "Trigger: alternative DEX pool has >2% higher volume-adjusted fee yield. Action: withdraw, rebalance, redeploy in one batch.",
     etaSeconds: 22,
     risk: "medium",
-    stages: ["Computing target weights", "Simulating batched swaps", "Validating guardrails", "Preparing approval payload"],
+    stages: ["Observe pool fee delta", "Calculate migration path", "Verify atomic batch safety", "Execute withdraw+swap+deposit"],
   },
   {
-    id: "guardrail-stress-test",
-    title: "Guardrail stress test",
-    detail: "Runs failure scenarios against SwapGuard limits to verify reject behavior.",
+    id: "protocol-buyback-burn",
+    title: "Automated Buy-Back & Burn / LP Support",
+    detail: "Trigger: token reaches support level. Action: convert stable fees into native token for burn or LP floor support.",
     etaSeconds: 26,
-    risk: "low",
-    stages: ["Generating adverse scenarios", "Running fork simulations", "Comparing policy outcomes", "Publishing safety report"],
-  },
-  {
-    id: "safe-bundle-forge",
-    title: "Safe bundle forge",
-    detail: "Assembles approve+swap operations into one executable Safe transaction bundle.",
-    etaSeconds: 16,
-    risk: "medium",
-    stages: ["Resolving token approvals", "Packing multicall payload", "Enforcing min-out checks", "Creating signer request"],
-  },
-  {
-    id: "emergency-freeze-drill",
-    title: "Emergency freeze drill",
-    detail: "Dry-runs pause and recovery procedures to measure response latency and operator readiness.",
-    etaSeconds: 14,
     risk: "high",
-    stages: ["Triggering pause simulation", "Validating blocked routes", "Testing resume sequence", "Logging drill evidence"],
-  },
-];
-
-const COMMANDS: CommandDefinition[] = [
-  {
-    id: "route-scan",
-    label: "Route Scan",
-    command: "equilibot routes:scan --approved-only --depth 5",
-    detail: "Finds highest quality route candidates right now.",
+    stages: ["Observe support breach", "Calculate buyback amount", "Verify floor-defense guardrails", "Execute support transaction"],
   },
   {
-    id: "simulate-bundle",
-    label: "Simulate Bundle",
-    command: "equilibot tx:simulate --bundle approve+swap --fork anvil",
-    detail: "Runs full fork simulation for the pending bundle.",
-  },
-  {
-    id: "submit-safe",
-    label: "Submit To Safe",
-    command: "equilibot safe:submit --require-proof --deadline 300",
-    detail: "Submits a policy-checked transaction for signer review.",
-  },
-  {
-    id: "audit-proof",
-    label: "Generate Audit Proof",
-    command: "equilibot audit:proof --format json --target greenfield",
-    detail: "Writes proof-of-intent artifacts for governance review.",
+    id: "yield-harvest-reinvest",
+    title: "Yield-Hustle Reward Harvesting",
+    detail: "Trigger: rewards exceed gas cost by 10x. Action: harvest, convert, and restake into highest-yield venue.",
+    etaSeconds: 16,
+    risk: "low",
+    stages: ["Observe reward buffer", "Calculate harvest ROI", "Verify gas ratio + slippage", "Execute claim+swap+restake"],
   },
 ];
 
@@ -137,23 +95,28 @@ type AgentHealthSummary = {
 };
 
 type TaskRunResponse = {
-  jobId?: string;
+  taskId?: string;
+  state?: string;
   status?: string;
   message?: string;
+  proof?: {
+    txHash?: string | null;
+    details?: Record<string, unknown>;
+  };
 };
 
-type CommandRunResponse = {
-  jobId?: string;
-  streamPath?: string;
-  status?: string;
+type TaskStatusRecord = {
+  taskId: string;
+  state: string;
+  lastRunAt: number | null;
+  nextRunAt: number | null;
+  lastMessage: string | null;
+  txHash: string | null;
 };
 
-type StreamEventPayload = {
-  line?: string;
-  message?: string;
-  done?: boolean;
-  error?: string;
-  status?: string;
+type TaskStatusResponse = {
+  enabled: boolean;
+  tasks: TaskStatusRecord[];
 };
 
 async function postAgent<T>(path: string, payload: Record<string, unknown>): Promise<T> {
@@ -292,6 +255,7 @@ export function AutonomousTaskRunner() {
   const [endpointReadiness, setEndpointReadiness] = useState<EndpointReadiness[]>([]);
   const [checkingReadiness, setCheckingReadiness] = useState(false);
   const [healthSummary, setHealthSummary] = useState<AgentHealthSummary | null>(null);
+  const [liveTaskStatus, setLiveTaskStatus] = useState<TaskStatusRecord[]>([]);
 
   const activeTask = useMemo(() => TASKS.find((task) => task.id === activeTaskId) ?? null, [activeTaskId]);
   const running = Boolean(activeTaskId);
@@ -387,6 +351,40 @@ export function AutonomousTaskRunner() {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchTaskStatus = async () => {
+      try {
+        const response = await fetch("/api/agent/tasks/status", {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const body = (await response.json()) as TaskStatusResponse;
+        if (mounted && body.enabled) {
+          setLiveTaskStatus(body.tasks);
+        }
+      } catch {
+        // Keep current status when polling fails.
+      }
+    };
+
+    void fetchTaskStatus();
+    const id = setInterval(() => {
+      void fetchTaskStatus();
+    }, 10000);
+
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
+
   const refreshHealthSummary = async () => {
     setCheckingReadiness(true);
     try {
@@ -464,9 +462,13 @@ export function AutonomousTaskRunner() {
 
       const completedAt = new Date().toLocaleTimeString();
       setResultSummary(
-        `Task ${task.title.toLowerCase()} submitted${runResponse.jobId ? ` (job ${runResponse.jobId})` : ""} at ${completedAt}. ${runResponse.message ?? "Agent accepted the request."}`,
+        `Task ${task.title.toLowerCase()} ${runResponse.state?.toLowerCase() ?? "submitted"} at ${completedAt}. ${runResponse.message ?? "Agent accepted the request."}`,
       );
       setRecentTasks((prev) => [task.title, ...prev].slice(0, 4));
+
+      if (runResponse.proof?.txHash) {
+        setResultSummary((prev) => `${prev ?? ""} Tx: ${runResponse.proof?.txHash}`.trim());
+      }
     } catch (error) {
       setResultSummary(error instanceof Error ? error.message : "Failed to run task via /api/agent/tasks/run.");
     } finally {
@@ -485,7 +487,7 @@ export function AutonomousTaskRunner() {
                   <p className="text-sm font-medium text-stone-50">{task.title}</p>
                   <p className="mt-1 text-xs leading-5 text-zinc-400">{task.detail}</p>
                 </div>
-                <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.22em] ${riskClass(task.risk)}`}>
+                <span className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-[0.12em] ${riskClass(task.risk)}`}>
                   {task.risk}
                 </span>
               </div>
@@ -512,7 +514,7 @@ export function AutonomousTaskRunner() {
           <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">Startup readiness</p>
+                <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Startup readiness</p>
                 <p className="mt-1 text-sm text-stone-50">{checkingReadiness ? "Pinging live endpoints..." : "Endpoint health snapshot"}</p>
               </div>
               <span className="text-xs text-zinc-500">{endpointReadiness.length}/3 checked</span>
@@ -542,7 +544,7 @@ export function AutonomousTaskRunner() {
 
           <div className="rounded-2xl border border-white/10 bg-black/30 p-4 text-xs text-zinc-300">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">High-risk gate</p>
+              <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">High-risk gate</p>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -579,7 +581,7 @@ export function AutonomousTaskRunner() {
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">Current phase</p>
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Current phase</p>
             <p className="mt-2 text-sm text-stone-50">
               {activeTask ? activeTask.stages[stageIndex] : "No active task"}
             </p>
@@ -593,12 +595,12 @@ export function AutonomousTaskRunner() {
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">Output summary</p>
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Output summary</p>
             <p className="mt-2 text-sm leading-6 text-zinc-300">{resultSummary ?? "Launch a task to generate execution output and operator-ready artifacts."}</p>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">Execution mode</p>
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Execution mode</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               <div className="rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-zinc-300">
                 <span className="block text-zinc-500">Telemetry status</span>
@@ -612,7 +614,7 @@ export function AutonomousTaskRunner() {
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
-            <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">Recent completions</p>
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Recent completions</p>
             <div className="mt-3 space-y-2">
               {recentTasks.length ? (
                 recentTasks.map((item) => (
@@ -626,137 +628,28 @@ export function AutonomousTaskRunner() {
               )}
             </div>
           </div>
-        </div>
-      </GlassPanel>
-    </div>
-  );
-}
 
-export function RapidCommandDeck() {
-  const streamRef = useRef<EventSource | null>(null);
-  const [activeCommandId, setActiveCommandId] = useState<string | null>(null);
-  const [lines, setLines] = useState<string[]>([]);
-
-  const running = Boolean(activeCommandId);
-
-  const runCommand = async (command: CommandDefinition) => {
-    if (running) {
-      return;
-    }
-
-    setActiveCommandId(command.id);
-    setLines([`$ ${command.command}`]);
-
-    try {
-      const runResponse = await postAgent<CommandRunResponse>("/api/agent/commands/run", {
-        commandId: command.id,
-        command: command.command,
-      });
-
-      const fallbackStreamPath = runResponse.jobId
-        ? `/api/agent/commands/${encodeURIComponent(runResponse.jobId)}/stream`
-        : `/api/agent/commands/stream?commandId=${encodeURIComponent(command.id)}`;
-      const streamPath = runResponse.streamPath ?? fallbackStreamPath;
-
-      streamRef.current?.close();
-      const eventSource = new EventSource(streamPath);
-      streamRef.current = eventSource;
-
-      eventSource.onopen = () => {
-        setLines((prev) => [...prev, "[stream] Connected to live agent output..."]);
-      };
-
-      eventSource.onmessage = (event) => {
-        let payload: StreamEventPayload | null = null;
-        try {
-          payload = JSON.parse(event.data) as StreamEventPayload;
-        } catch {
-          payload = { line: event.data };
-        }
-
-        if (payload.error) {
-          setLines((prev) => [...prev, `[error] ${payload.error}`]);
-          eventSource.close();
-          setActiveCommandId(null);
-          return;
-        }
-
-        const line = payload.line ?? payload.message ?? event.data;
-        if (line) {
-          setLines((prev) => [...prev, line]);
-        }
-
-        if (payload.done) {
-          setLines((prev) => [...prev, "[stream] Command complete."]);
-          eventSource.close();
-          setActiveCommandId(null);
-        }
-      };
-
-      eventSource.onerror = () => {
-        setLines((prev) => [...prev, "[stream] Connection closed."]);
-        eventSource.close();
-        setActiveCommandId(null);
-      };
-    } catch (error) {
-      setLines((prev) => [...prev, error instanceof Error ? `[error] ${error.message}` : "[error] Failed to run command"]);
-      setActiveCommandId(null);
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      streamRef.current?.close();
-      streamRef.current = null;
-    };
-  }, []);
-
-  return (
-    <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
-      <GlassPanel title="Rapid Command Deck" subtitle="Trigger high-value automation commands directly from the dashboard.">
-        <div className="space-y-3">
-          {COMMANDS.map((command) => (
-            <div key={command.id} className="rounded-2xl border border-white/10 bg-black/25 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-stone-50">{command.label}</p>
-                  <p className="mt-1 text-xs text-zinc-400">{command.detail}</p>
-                </div>
-                <button
-                  onClick={() => {
-                    void runCommand(command);
-                  }}
-                  disabled={running}
-                  className="rounded-xl bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 ring-1 ring-white/20 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {activeCommandId === command.id ? "Running" : "Run"}
-                </button>
-              </div>
-              <div className="mt-3 rounded-xl border border-white/10 bg-black/35 px-3 py-2 font-mono text-[11px] text-zinc-400">
-                {command.command}
-              </div>
+          <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+            <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Live task state</p>
+            <div className="mt-3 space-y-2">
+              {liveTaskStatus.length ? (
+                liveTaskStatus.map((task) => (
+                  <div key={task.taskId} className="rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-zinc-300">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-stone-50">{task.taskId}</span>
+                      <span className="uppercase tracking-[0.12em] text-zinc-500">{task.state}</span>
+                    </div>
+                    {task.lastMessage ? <p className="mt-1 text-zinc-400">{task.lastMessage}</p> : null}
+                    <p className="mt-1 text-zinc-500">
+                      Next run: {task.nextRunAt ? new Date(task.nextRunAt).toLocaleTimeString() : "n/a"}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-zinc-500">No live task status available yet.</p>
+              )}
             </div>
-          ))}
-        </div>
-      </GlassPanel>
-
-      <GlassPanel title="Live Command Output" subtitle="Keyboard-style stream with staged execution traces.">
-        <div className="scrollbar-hidden max-h-80 overflow-y-auto rounded-2xl border border-white/10 bg-black/40 p-4 font-mono text-[12px] leading-6 text-zinc-300">
-          {lines.length ? (
-            lines.map((line, index) => (
-              <div key={`${line}-${index}`} className="whitespace-pre-wrap">
-                {line}
-              </div>
-            ))
-          ) : (
-            <p className="text-zinc-500">Run a command to stream output here.</p>
-          )}
-        </div>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <MiniBadge icon={TerminalSquare} label="Shell" value={running ? "Busy" : "Ready"} />
-          <MiniBadge icon={Braces} label="Mode" value="Sandbox" />
-          <MiniBadge icon={Zap} label="Latency" value={running ? "~150ms" : "--"} />
+          </div>
         </div>
       </GlassPanel>
     </div>

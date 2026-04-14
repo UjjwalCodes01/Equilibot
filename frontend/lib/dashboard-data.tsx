@@ -271,6 +271,18 @@ type TelemetryPolicy = Record<string, unknown> & {
   cachedAt?: number;
 };
 
+type TelemetryTaskStatusResponse = {
+  enabled?: boolean;
+  tasks?: Array<{
+    taskId: string;
+    state: string;
+    lastRunAt: number | null;
+    nextRunAt: number | null;
+    lastMessage: string | null;
+    txHash: string | null;
+  }>;
+};
+
 type LiveElizaLog = {
   timestamp: string;
   level: string;
@@ -297,6 +309,10 @@ const SWAP_GUARD_ABI = parseAbi([
 const SAFE_ABI = parseAbi([
   "function isModuleEnabled(address) view returns (bool)",
 ]);
+
+const PUBLIC_GUARD_ADDRESS = process.env.NEXT_PUBLIC_GUARD_ADDRESS;
+const PUBLIC_SAFE_ADDRESS = process.env.NEXT_PUBLIC_SAFE_ADDRESS;
+const PUBLIC_MODULE_ADDRESS = process.env.NEXT_PUBLIC_MODULE_ADDRESS;
 
 const EMPTY_DASHBOARD: DashboardData = {};
 
@@ -625,12 +641,13 @@ function isAddressLike(value: unknown): value is Address {
 }
 
 async function fetchLiveSnapshot(publicClient: PublicClient | null): Promise<DashboardData> {
-  const [status, metrics, audit, policy, logs] = await Promise.all([
-    fetchJson<TelemetryStatus>("/api/agent/status"),
-    fetchJson<TelemetryMetrics>("/api/agent/metrics"),
-    fetchJson<TelemetryAuditResponse>("/api/agent/audit?limit=100&offset=0"),
-    fetchJson<TelemetryPolicy>("/api/agent/policy"),
+  const [status, metrics, audit, policy, logs, taskStatus] = await Promise.all([
+    fetchJson<TelemetryStatus>("/api/agent/api/status"),
+    fetchJson<TelemetryMetrics>("/api/agent/api/metrics"),
+    fetchJson<TelemetryAuditResponse>("/api/agent/api/audit?limit=100&offset=0"),
+    fetchJson<TelemetryPolicy>("/api/agent/api/policy"),
     fetchJson<{ entries?: LiveElizaLog[] }>("/api/eliza/logs?limit=120"),
+    fetchJson<TelemetryTaskStatusResponse>("/api/agent/tasks/status"),
   ]);
 
   const auditEntries = collectAuditEntries(audit);
@@ -679,9 +696,63 @@ async function fetchLiveSnapshot(publicClient: PublicClient | null): Promise<Das
     terminal: buildTerminal(status, metrics, logs?.entries ?? []),
   };
 
-  const guardAddress = asAddress(policy?.guardAddress ?? policy?.swapGuardAddress);
-  const safeAddress = asAddress(policy?.safeAddress);
-  const moduleAddress = asAddress(policy?.moduleAddress);
+  if (!dashboard.incentiveArbitrageMap?.cells?.length && taskStatus?.enabled && taskStatus.tasks?.length) {
+    dashboard.incentiveArbitrageMap = {
+      chainLabel: "BNB Chain",
+      updatedAt: new Date().toISOString(),
+      cells: taskStatus.tasks.slice(0, 8).map((task, index) => ({
+        id: `${task.taskId}-${index}`,
+        label: task.taskId,
+        intensity: task.state === "RUNNING" ? 90 : task.state === "EXECUTED" ? 70 : task.state === "REJECTED" ? 50 : 30,
+        pool: task.lastMessage ?? task.state,
+      })),
+    };
+  }
+
+  if (!dashboard.incentiveArbitrageMap?.cells?.length && status) {
+    dashboard.incentiveArbitrageMap = {
+      chainLabel: `BNB Chain (${status.executionMode ?? "unknown"})`,
+      updatedAt: new Date().toISOString(),
+      cells: [
+        {
+          id: "telemetry-heartbeat",
+          label: "Telemetry heartbeat",
+          intensity: Math.max(20, Math.min(100, Number(metrics?.opportunitiesDetected ?? 0) + 20)),
+          pool: `pairs watched: ${status.pairsWatched ?? 0}`,
+        },
+      ],
+    };
+  }
+
+  const guardAddress = asAddress(policy?.guardAddress ?? policy?.swapGuardAddress ?? PUBLIC_GUARD_ADDRESS);
+  const safeAddress = asAddress(policy?.safeAddress ?? PUBLIC_SAFE_ADDRESS);
+  const moduleAddress = asAddress(policy?.moduleAddress ?? PUBLIC_MODULE_ADDRESS);
+
+  dashboard.safetyVault = {
+    ...(dashboard.safetyVault ?? EMPTY_DASHBOARD.safetyVault),
+    permissions: [
+      ...(dashboard.safetyVault?.permissions ?? []),
+      { label: "Guard configured", enabled: Boolean(guardAddress), detail: guardAddress ?? "Missing NEXT_PUBLIC_GUARD_ADDRESS" },
+      { label: "Safe configured", enabled: Boolean(safeAddress), detail: safeAddress ?? "Missing NEXT_PUBLIC_SAFE_ADDRESS" },
+      { label: "Module configured", enabled: Boolean(moduleAddress), detail: moduleAddress ?? "Missing NEXT_PUBLIC_MODULE_ADDRESS" },
+    ],
+  };
+
+  if (!dashboard.safetyVault?.guardrails?.length) {
+    dashboard.safetyVault = {
+      ...(dashboard.safetyVault ?? EMPTY_DASHBOARD.safetyVault),
+      guardrails: [
+        {
+          label: "Policy cache",
+          value: policy ? "Connected" : "Pending /api/policy",
+        },
+        {
+          label: "Telemetry status",
+          value: status ? "Connected" : "Unavailable",
+        },
+      ],
+    };
+  }
 
   if (publicClient && guardAddress) {
     try {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 const TELEMETRY_BASE_URL = process.env.AGENT_TELEMETRY_BASE_URL ?? "http://127.0.0.1:9100";
+const TELEMETRY_API_TOKEN = process.env.AGENT_TELEMETRY_API_TOKEN;
 
 type AgentProxyContext = { params: Promise<{ path: string[] }> };
 
@@ -10,12 +11,17 @@ async function proxyToAgent(request: Request, context: AgentProxyContext, method
   targetUrl.search = new URL(request.url).search;
 
   try {
+    const headers: Record<string, string> = {
+      "content-type": request.headers.get("content-type") ?? "application/json; charset=utf-8",
+    };
+    if (TELEMETRY_API_TOKEN) {
+      headers.authorization = `Bearer ${TELEMETRY_API_TOKEN}`;
+    }
+
     const response = await fetch(targetUrl, {
       method,
       cache: "no-store",
-      headers: {
-        "content-type": request.headers.get("content-type") ?? "application/json; charset=utf-8",
-      },
+      headers,
       body: method === "POST" ? await request.text() : undefined,
     });
 

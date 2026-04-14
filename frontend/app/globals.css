@@ -9,7 +9,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-cormorant);
+  --font-sans: var(--font-jakarta);
   --font-serif: var(--font-cormorant);
   --font-mono: var(--font-plex-mono);
 }
@@ -21,7 +21,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-cormorant), Georgia, serif;
+  font-family: var(--font-jakarta), "Avenir Next", "Segoe UI", sans-serif;
   min-height: 100vh;
 }
 

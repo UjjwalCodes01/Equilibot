@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 
 const TELEMETRY_BASE_URL = process.env.AGENT_TELEMETRY_BASE_URL ?? "http://127.0.0.1:9100";
+const TELEMETRY_API_TOKEN = process.env.AGENT_TELEMETRY_API_TOKEN;
 
 async function fetchJson(path: string) {
+  const headers: Record<string, string> = {};
+  if (TELEMETRY_API_TOKEN) {
+    headers.authorization = `Bearer ${TELEMETRY_API_TOKEN}`;
+  }
+
   const response = await fetch(new URL(path, `${TELEMETRY_BASE_URL.replace(/\/$/, "")}/`), {
     cache: "no-store",
+    headers,
   });
 
   const text = await response.text();
