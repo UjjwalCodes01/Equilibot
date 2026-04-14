@@ -7,12 +7,15 @@
  * This is the "Intent Proof" from the architecture doc:
  * [Market State] + [Reasoning] + [Sim Result] + [Policy Result] + [Execution Result]
  *
- * Files are rotated daily. Each record is fully self-contained.
+ * Files are rotated daily. File size capped at 50MB with timestamped rotation.
+ * Each record is fully self-contained.
  * Operators can answer: why was this action executed/rejected?
  */
 
 import { appendFile, mkdir } from 'fs/promises'
+import { readFileSync, statSync, existsSync } from 'fs'
 import { join } from 'path'
+import { keccak256 } from 'viem'
 import { createLogger } from '../utils/logger.js'
 import type {
   RebalanceIntent,
@@ -24,6 +27,8 @@ import type {
 } from '../types/index.js'
 
 const log = createLogger('audit-store')
+
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024 // 50 MB
 
 interface AuditEntry {
   readonly timestamp: string
@@ -96,7 +101,8 @@ export class AuditStore {
         deadline: intent.deadline.toString(),
         estimatedGasCost: intent.estimatedGasCost.toString(),
         estimatedProfit: intent.estimatedProfit.toString(),
-        routerCalldataHash: intent.routerCalldata.slice(0, 10), // selector only
+        routerCalldataHash: keccak256(intent.routerCalldata),
+        routerCalldataSelector: intent.routerCalldata.slice(0, 10),
       },
     })
   }
@@ -149,19 +155,73 @@ export class AuditStore {
     })
   }
 
+  /**
+   * Read audit entries synchronously for the telemetry API.
+   * Returns parsed JSON entries for a given date.
+   */
+  readAuditEntriesSync(
+    date: string,
+    limit: number = 100,
+    offset: number = 0
+  ): AuditEntry[] {
+    const filePath = join(this.dataDir, `audit-${date}.ndjson`)
+
+    if (!existsSync(filePath)) {
+      return []
+    }
+
+    try {
+      const content = readFileSync(filePath, 'utf-8')
+      const lines = content.trim().split('\n').filter(Boolean)
+
+      return lines
+        .slice(offset, offset + limit)
+        .map((line) => {
+          try {
+            return JSON.parse(line) as AuditEntry
+          } catch {
+            return null
+          }
+        })
+        .filter((entry): entry is AuditEntry => entry !== null)
+    } catch (error) {
+      log.error({ stage: 'SYSTEM', error, filePath }, 'Failed to read audit entries')
+      return []
+    }
+  }
+
   private async write(entry: AuditEntry): Promise<void> {
     if (!this.initialized) {
       log.warn({ stage: 'SYSTEM' }, 'Audit store not initialized, skipping write')
       return
     }
 
-    const dateStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD
-    const filePath = join(this.dataDir, `audit-${dateStr}.ndjson`)
+    const dateStr = new Date().toISOString().split('T')[0]!
+    let filePath = join(this.dataDir, `audit-${dateStr}.ndjson`)
+
+    // File rotation: if file exceeds max size, rotate to timestamped suffix
+    try {
+      if (existsSync(filePath)) {
+        const stats = statSync(filePath)
+        if (stats.size >= MAX_FILE_SIZE_BYTES) {
+          const rotatedPath = join(
+            this.dataDir,
+            `audit-${dateStr}-${Date.now()}.ndjson`
+          )
+          log.info(
+            { stage: 'SYSTEM', filePath, rotatedPath, size: stats.size },
+            'Audit file exceeded max size, rotating'
+          )
+          filePath = rotatedPath
+        }
+      }
+    } catch {
+      // stat failed — continue with original path
+    }
 
     try {
       await appendFile(filePath, JSON.stringify(entry) + '\n', 'utf-8')
     } catch (error) {
-      // Audit write failure should never crash the agent
       log.error(
         { stage: 'SYSTEM', error, filePath },
         'Failed to write audit record'

@@ -37,4 +37,21 @@ describe('PolicyService', () => {
     expect(result.error).toBe('Unknown policy rejection')
     expect(result.errorSelector).toBe('0xdeadbeef')
   })
+
+  it('extracts selector from viem error message and maps known reason', async () => {
+    const err = new Error(
+      'The contract function "checkSwap" reverted with the following signature:\n0x16c0be26'
+    )
+
+    const client = {
+      readContract: vi.fn().mockRejectedValue(err),
+    } as unknown as PublicClient
+
+    const service = new PolicyService(client, MOCK_ADDRESSES.guard, MOCK_ADDRESSES.agent)
+    const result = await service.validateIntent(MOCK_INTENT, MOCK_SWAP_REQUEST)
+
+    expect(result.passed).toBe(false)
+    expect(result.error).toBe('Price deviates too much from oracle')
+    expect(result.errorSelector).toBe('0x16c0be26')
+  })
 })

@@ -15,13 +15,18 @@ import {
   type Address,
   type Hex,
   type PublicClient,
+  createPublicClient,
   createWalletClient,
+  encodeFunctionData,
   http,
+  keccak256,
+  serializeTransaction,
 } from 'viem'
-import { privateKeyToAccount } from 'viem/accounts'
+import { type PrivateKeyAccount } from 'viem/accounts'
 import { bsc, bscTestnet } from 'viem/chains'
 import { equiliBotModuleAbi } from '../abi/equilibot-module.js'
 import type { RebalanceIntent, ExecutionRecord, SwapRequestStruct } from '../types/index.js'
+import type { AgentSigner } from './signer.js'
 import { createLogger } from '../utils/logger.js'
 
 const log = createLogger('execution-service')
@@ -31,27 +36,24 @@ const TX_CONFIRMATION_TIMEOUT_MS = 60_000
 export class ExecutionService {
   private readonly publicClient: PublicClient
   private readonly moduleAddress: Address
-  private readonly agentAddress: Address
-  private readonly signerMode: 'local' | 'managed'
-  private readonly agentPrivateKey: Hex | undefined
+  private readonly signer: AgentSigner
   private readonly chainId: number
+  private readonly rpcHttpUrl: string
   private readonly privateRpcUrl: string | undefined
 
   constructor(
     publicClient: PublicClient,
     moduleAddress: Address,
-    agentAddress: Address,
-    signerMode: 'local' | 'managed',
+    signer: AgentSigner,
     chainId: number,
-    agentPrivateKey?: Hex,
+    rpcHttpUrl: string,
     privateRpcUrl?: string
   ) {
     this.publicClient = publicClient
     this.moduleAddress = moduleAddress
-    this.agentAddress = agentAddress
-    this.signerMode = signerMode
-    this.agentPrivateKey = agentPrivateKey
+    this.signer = signer
     this.chainId = chainId
+    this.rpcHttpUrl = rpcHttpUrl
     this.privateRpcUrl = privateRpcUrl
   }
 
@@ -66,20 +68,6 @@ export class ExecutionService {
     const timestamp = Date.now()
 
     try {
-      // Create wallet client for transaction submission
-      const chain = this.chainId === 56 ? bsc : bscTestnet
-      const rpcUrl = this.privateRpcUrl ?? undefined
-      const account =
-        this.signerMode === 'managed'
-          ? this.agentAddress
-          : this.getLocalSignerAccount()
-
-      const walletClient = createWalletClient({
-        chain,
-        transport: http(rpcUrl),
-        account,
-      })
-
       const nativeValue =
         intent.tokenIn === '0x0000000000000000000000000000000000000000'
           ? intent.amountIn
@@ -96,27 +84,9 @@ export class ExecutionService {
         'Submitting executeSwap transaction...'
       )
 
-      // Submit the transaction
-      const txHash = await walletClient.writeContract({
-        address: this.moduleAddress,
-        abi: equiliBotModuleAbi,
-        functionName: 'executeSwap',
-        args: [
-          {
-            swapType: swapRequest.swapType,
-            router: swapRequest.router,
-            tokenIn: swapRequest.tokenIn,
-            tokenOut: swapRequest.tokenOut,
-            amountIn: swapRequest.amountIn,
-            expectedAmountIn: swapRequest.expectedAmountIn,
-            minAmountOut: swapRequest.minAmountOut,
-            expectedAmountOut: swapRequest.expectedAmountOut,
-            deadline: swapRequest.deadline,
-          },
-          intent.routerCalldata,
-          nativeValue,
-        ],
-      })
+      const txHash = this.signer.mode === 'managed'
+        ? await this.submitManagedSignedTransaction(intent, swapRequest, nativeValue)
+        : await this.submitLocalTransaction(intent, swapRequest, nativeValue)
 
       log.info(
         { stage: 'EXECUTE', intentId: intent.id, txHash },
@@ -192,10 +162,126 @@ export class ExecutionService {
     }
   }
 
-  private getLocalSignerAccount() {
-    if (!this.agentPrivateKey) {
-      throw new Error('AGENT_PRIVATE_KEY is required for local signer mode')
+  private async submitLocalTransaction(
+    intent: RebalanceIntent,
+    swapRequest: SwapRequestStruct,
+    nativeValue: bigint
+  ): Promise<Hex> {
+    const chain = this.chainId === 56 ? bsc : bscTestnet
+    const walletClient = createWalletClient({
+      chain,
+      transport: http(this.rpcHttpUrl),
+      account: this.getLocalSignerAccount(),
+    })
+
+    return walletClient.writeContract({
+      address: this.moduleAddress,
+      abi: equiliBotModuleAbi,
+      functionName: 'executeSwap',
+      args: [
+        {
+          swapType: swapRequest.swapType,
+          router: swapRequest.router,
+          tokenIn: swapRequest.tokenIn,
+          tokenOut: swapRequest.tokenOut,
+          amountIn: swapRequest.amountIn,
+          expectedAmountIn: swapRequest.expectedAmountIn,
+          minAmountOut: swapRequest.minAmountOut,
+          expectedAmountOut: swapRequest.expectedAmountOut,
+          deadline: swapRequest.deadline,
+        },
+        intent.routerCalldata,
+        nativeValue,
+      ],
+    })
+  }
+
+  private async submitManagedSignedTransaction(
+    intent: RebalanceIntent,
+    swapRequest: SwapRequestStruct,
+    nativeValue: bigint
+  ): Promise<Hex> {
+    if (!this.privateRpcUrl) {
+      throw new Error('RPC_PRIVATE_URL is required in managed signer mode')
     }
-    return privateKeyToAccount(this.agentPrivateKey)
+    if (!this.signer.signTransactionDigest) {
+      throw new Error('Managed signer does not support native digest signing')
+    }
+
+    const chain = this.chainId === 56 ? bsc : bscTestnet
+    const submissionClient = createPublicClient({
+      chain,
+      transport: http(this.privateRpcUrl),
+    })
+
+    const data = encodeFunctionData({
+      abi: equiliBotModuleAbi,
+      functionName: 'executeSwap',
+      args: [
+        {
+          swapType: swapRequest.swapType,
+          router: swapRequest.router,
+          tokenIn: swapRequest.tokenIn,
+          tokenOut: swapRequest.tokenOut,
+          amountIn: swapRequest.amountIn,
+          expectedAmountIn: swapRequest.expectedAmountIn,
+          minAmountOut: swapRequest.minAmountOut,
+          expectedAmountOut: swapRequest.expectedAmountOut,
+          deadline: swapRequest.deadline,
+        },
+        intent.routerCalldata,
+        nativeValue,
+      ],
+    })
+
+    const [nonce, gasPrice, gas] = await Promise.all([
+      submissionClient.getTransactionCount({
+        address: this.signer.address,
+        blockTag: 'pending',
+      }),
+      submissionClient.getGasPrice(),
+      submissionClient.estimateGas({
+        account: this.signer.address,
+        to: this.moduleAddress,
+        data,
+        value: nativeValue,
+      }),
+    ])
+
+    const unsignedTx = {
+      type: 'legacy' as const,
+      chainId: this.chainId,
+      nonce,
+      gasPrice,
+      gas,
+      to: this.moduleAddress,
+      value: nativeValue,
+      data,
+    }
+
+    const digest = keccak256(serializeTransaction(unsignedTx))
+    const signature = await this.signer.signTransactionDigest(digest)
+    const signedRawTransaction = serializeTransaction(unsignedTx, {
+      r: signature.r,
+      s: signature.s,
+      v: BigInt(signature.yParity + 35 + this.chainId * 2),
+    })
+
+    return submissionClient.sendRawTransaction({
+      serializedTransaction: signedRawTransaction,
+    })
+  }
+
+  private getLocalSignerAccount(): PrivateKeyAccount {
+    if (this.signer.mode !== 'local') {
+      throw new Error('Local signer account requested while signer mode is managed')
+    }
+
+    const account = this.signer.getAccount()
+    if (typeof account === 'string') {
+      throw new Error('Invalid local signer account')
+    }
+
+    return account
   }
 }

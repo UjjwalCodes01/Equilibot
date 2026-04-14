@@ -78,8 +78,9 @@ export function getPairDefinitions(chainId: number): PairDefinition[] {
         tokenB: TOKENS_TESTNET.BUSD!,
         feeTier: 500, // 0.05%
         pythPriceFeedIdA: PYTH_FEED_IDS['BNB/USD'],
-        // Hermes does not currently return BUSD/USD on testnet; use USDT/USD as a stable USD proxy.
-        pythPriceFeedIdB: PYTH_FEED_IDS['USDT/USD'],
+        // No direct BUSD/USD feed is available in Hermes on testnet.
+        // The pipeline derives BUSD/USD from on-chain guard oracle quotes.
+        pythPriceFeedIdB: null,
       },
     ]
   }

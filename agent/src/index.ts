@@ -1,21 +1,17 @@
 /**
- * EquiliBot Agent — Main Orchestrator
+ * EquiliBot Agent — Main Orchestrator (Phase 3)
  *
- * The Observe → Calculate → Verify → Execute loop.
- *
- * 1. Load and validate config
- * 2. Initialize all services
- * 3. Resolve pool addresses from V3 Factory
- * 4. Verify agent is authorized on EquiliBotModule
- * 5. Verify SwapGuard is not paused
- * 6. Start WebSocket market observer
- * 7. On each pool state change: full pipeline
- * 8. Circuit breaker: self-pause after consecutive failures
+ * The Observe → Calculate → Verify → Execute loop with:
+ * - Execution mode ladder (observe → simulate → canary → active)
+ * - Runtime pre-submit policy enforcement
+ * - Metrics collection and telemetry API
+ * - Signer abstraction (local / managed)
+ * - Graceful shutdown with cleanup
  */
 
 import { createPublicClient, http, webSocket, type Address, type Hex } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { privateKeyToAccount } from 'viem/accounts'
+import { spawnSync } from 'child_process'
 import { getConfig } from './config/index.js'
 import { getAddresses } from './config/addresses.js'
 import { getPairDefinitions } from './config/pairs.js'
@@ -27,10 +23,17 @@ import { QuoteService } from './services/quote-service.js'
 import { PolicyService } from './services/policy-service.js'
 import { SimulationService } from './services/simulation-service.js'
 import { ExecutionService } from './services/execution-service.js'
+import { GuardOracleService } from './services/guard-oracle-service.js'
+import { AlertService } from './services/alert-service.js'
+import { RiskMonitor } from './services/risk-monitor.js'
 import { AuditStore } from './services/audit-store.js'
+import { createSigner } from './services/signer.js'
+import { MetricsCollector } from './services/metrics-collector.js'
+import { TelemetryServer } from './services/telemetry-server.js'
 import { RebalanceDetector } from './strategy/rebalance-detector.js'
 import { IntentBuilder } from './strategy/intent-builder.js'
 import { checkProfitability } from './strategy/profitability.js'
+import { validatePreSubmit, type ExecutionMode } from './strategy/runtime-policy.js'
 import { CircuitBreaker } from './utils/circuit-breaker.js'
 import { createLogger } from './utils/logger.js'
 import { equiliBotModuleAbi } from './abi/equilibot-module.js'
@@ -59,17 +62,47 @@ async function main(): Promise<void> {
   // 1. Load config
   const config = getConfig()
   const addresses = getAddresses()
-  const agentAddress =
-    config.SIGNER_MODE === 'managed'
-      ? (config.MANAGED_SIGNER_ADDRESS as Address)
-      : privateKeyToAccount(config.AGENT_PRIVATE_KEY as Hex).address
+  const executionMode = config.EXECUTION_MODE as ExecutionMode
+
+  const alertService = new AlertService(
+    config.ALERT_WEBHOOK_URL,
+    config.ALERT_MIN_SEVERITY,
+    config.ALERT_DEDUP_COOLDOWN_MS
+  )
+
+  const riskMonitor = new RiskMonitor({
+    policyRejectionWindowMs: config.ALERT_POLICY_REJECTION_WINDOW_MIN * 60_000,
+    policyRejectionThreshold: config.ALERT_POLICY_REJECTION_THRESHOLD,
+    oracleNullWindowMs: config.ALERT_ORACLE_NULL_WINDOW_MIN * 60_000,
+    oracleNullThreshold: config.ALERT_ORACLE_NULL_THRESHOLD,
+    rpcFailureThreshold: config.ALERT_RPC_FAILURE_THRESHOLD,
+  })
+
+  // 2. Create signer
+  const signer = createSigner(
+    config.SIGNER_MODE,
+    config.AGENT_PRIVATE_KEY as Hex | undefined,
+    config.MANAGED_SIGNER_ADDRESS as Address | undefined,
+    config.MANAGED_SIGNER_PROVIDER,
+    config.RPC_PRIVATE_URL,
+    config.AWS_REGION,
+    config.AWS_KMS_KEY_ID
+  )
+
+  // Signer health check
+  const signerHealthy = await signer.healthCheck()
+  if (!signerHealthy) {
+    log.fatal({ stage: 'INIT' }, 'FATAL: Signer health check failed')
+    process.exit(1)
+  }
 
   log.info(
     {
       stage: 'INIT',
       chainId: config.CHAIN_ID,
-      agent: agentAddress,
-      signerMode: config.SIGNER_MODE,
+      agent: signer.address,
+      signerMode: signer.mode,
+      executionMode,
       module: addresses.module,
       guard: addresses.guard,
       safe: addresses.safe,
@@ -77,26 +110,27 @@ async function main(): Promise<void> {
     'Configuration loaded'
   )
 
-  // 2. Initialize HTTP client
+  // 3. Initialize HTTP client
   const chain = config.CHAIN_ID === 56 ? bsc : bscTestnet
   const httpClient = createPublicClient({
     chain,
     transport: http(config.RPC_HTTP_URL),
   })
 
-  // 3. Pre-flight checks
+  // 4. Pre-flight checks
   await runPreflightChecks(
     httpClient,
     addresses,
-    agentAddress,
+    signer.address,
     config.CHAIN_ID,
-    config.RPC_WSS_URL
+    config.RPC_WSS_URL,
+    executionMode
   )
 
-  // 4. Read on-chain policy parameters
+  // 5. Read on-chain policy parameters
   const policyParams = await readPolicyParams(httpClient, addresses.guard)
 
-  // 5. Initialize all services
+  // 6. Initialize all services
   const observer = new MarketObserver(
     config.RPC_HTTP_URL,
     config.RPC_WSS_URL,
@@ -106,18 +140,19 @@ async function main(): Promise<void> {
   const oracleService = new OracleService(config.PYTH_HERMES_URL)
   const gasService = new GasService(httpClient)
   const balanceService = new BalanceService(httpClient, addresses.safe)
-
   const quoteService = new QuoteService(httpClient, addresses.pancakeQuoterV2)
 
   const policyService = new PolicyService(
     httpClient,
     addresses.guard,
-    agentAddress
+    signer.address
   )
+
+  const guardOracleService = new GuardOracleService(httpClient, addresses.guard)
 
   const simulationService = new SimulationService(
     config.RPC_HTTP_URL,
-    agentAddress,
+    signer.address,
     config.SIGNER_MODE,
     addresses.module,
     addresses.safe,
@@ -128,10 +163,9 @@ async function main(): Promise<void> {
   const executionService = new ExecutionService(
     httpClient,
     addresses.module,
-    agentAddress,
-    config.SIGNER_MODE,
+    signer,
     config.CHAIN_ID,
-    config.AGENT_PRIVATE_KEY as Hex | undefined,
+    config.RPC_HTTP_URL,
     config.RPC_PRIVATE_URL
   )
 
@@ -140,7 +174,18 @@ async function main(): Promise<void> {
   )
   await auditStore.init()
 
-  // Read min trade amounts from SwapGuard for each token
+  const metricsCollector = new MetricsCollector()
+  const circuitBreaker = new CircuitBreaker(config.MAX_CONSECUTIVE_FAILURES)
+
+  // 7. Initialize telemetry server
+  const telemetryServer = new TelemetryServer(
+    config.TELEMETRY_PORT,
+    config.TELEMETRY_BIND_ADDRESS,
+    config.TELEMETRY_ALLOWED_ORIGIN,
+    config.TELEMETRY_API_TOKEN
+  )
+
+  // Read min trade amounts from SwapGuard
   const minTradeAmounts = new Map<Address, bigint>()
   const pairDefinitions = getPairDefinitions(config.CHAIN_ID)
   for (const pairDef of pairDefinitions) {
@@ -172,9 +217,7 @@ async function main(): Promise<void> {
     maxDeadlineDelaySeconds: Number(policyParams.maxDeadlineDelay),
   })
 
-  const circuitBreaker = new CircuitBreaker(config.MAX_CONSECUTIVE_FAILURES)
-
-  // 6. Resolve pool addresses from V3 Factory
+  // 8. Resolve pool addresses from V3 Factory
   pairs = await observer.resolvePools(addresses.pancakeV3Factory, pairDefinitions)
 
   if (pairs.length === 0) {
@@ -186,10 +229,51 @@ async function main(): Promise<void> {
     poolToPair.set(pair.poolAddress, pair)
   }
 
-  // 7. Start services
+  // 9. Start services
   await gasService.start()
 
-  // 8. Register the pipeline as the observer callback
+  // Set telemetry deps
+  telemetryServer.setDeps({
+    metrics: metricsCollector,
+    auditStore,
+    circuitBreaker,
+    executionMode,
+    pairsWatched: pairs.length,
+    chainId: config.CHAIN_ID,
+  })
+  telemetryServer.setPolicyCache({
+    maxSlippageBps: policyParams.maxSlippageBps,
+    maxDeadlineDelay: policyParams.maxDeadlineDelay.toString(),
+    cooldownSeconds: policyParams.cooldownSeconds.toString(),
+  })
+  await telemetryServer.start()
+
+  let rpcHealthCheckInFlight = false
+  const rpcHealthInterval = setInterval(() => {
+    if (rpcHealthCheckInFlight) {
+      return
+    }
+
+    rpcHealthCheckInFlight = true
+    void (async () => {
+      try {
+        const blockNumber = await httpClient.getBlockNumber()
+        const recoveryAlert = riskMonitor.recordRpcSuccess(blockNumber)
+        if (recoveryAlert) {
+          await alertService.notify(recoveryAlert)
+        }
+      } catch (error) {
+        const degradationAlert = riskMonitor.recordRpcFailure(error)
+        if (degradationAlert) {
+          await alertService.notify(degradationAlert)
+        }
+      } finally {
+        rpcHealthCheckInFlight = false
+      }
+    })()
+  }, config.ALERT_RPC_CHECK_INTERVAL_MS)
+
+  // 10. Register the pipeline as the observer callback
   observer.onUpdate(async (poolAddress: Address, poolState: PoolState) => {
     if (circuitBreaker.isTripped) {
       log.warn({ stage: 'SYSTEM' }, 'Circuit breaker tripped — ignoring update')
@@ -201,7 +285,6 @@ async function main(): Promise<void> {
       return
     }
 
-    // Debounce: skip if already processed this block for this pool
     const lastBlock = lastProcessedBlock.get(poolAddress)
     if (lastBlock !== undefined && lastBlock >= poolState.blockNumber) {
       return
@@ -216,6 +299,7 @@ async function main(): Promise<void> {
         pair,
         poolState,
         config,
+        executionMode,
         oracleService,
         gasService,
         balanceService,
@@ -223,10 +307,14 @@ async function main(): Promise<void> {
         detector,
         intentBuilder,
         policyService,
+        guardOracleService,
         simulationService,
         executionService,
         auditStore,
-        circuitBreaker
+        metricsCollector,
+        circuitBreaker,
+        alertService,
+        riskMonitor
       )
       lastProcessedBlock.set(poolAddress, poolState.blockNumber)
     } finally {
@@ -234,20 +322,28 @@ async function main(): Promise<void> {
     }
   })
 
-  // 9. Start the observer
+  // 11. Start the observer
   await observer.start(pairs)
-  log.status('OBSERVING', `EquiliBot Agent is live — watching ${pairs.length} pools`)
+  log.status(
+    'OBSERVING',
+    `EquiliBot Agent is live — mode=${executionMode}, watching ${pairs.length} pools`
+  )
 
   // Graceful shutdown
-  const shutdown = () => {
+  const shutdown = async () => {
     log.status('PAUSED', 'Shutting down...')
     observer.stop()
     gasService.stop()
+    clearInterval(rpcHealthInterval)
+    await telemetryServer.stop()
     process.exit(0)
   }
 
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', () => { shutdown() })
+  process.on('SIGTERM', () => { shutdown() })
+  process.on('unhandledRejection', (reason) => {
+    log.error({ stage: 'SYSTEM', error: reason }, 'Unhandled promise rejection')
+  })
 }
 
 // ─── Pipeline ────────────────────────────────────────────────────
@@ -256,6 +352,7 @@ async function runPipeline(
   pair: TradingPair,
   poolState: PoolState,
   config: ReturnType<typeof getConfig>,
+  executionMode: ExecutionMode,
   oracleService: OracleService,
   gasService: GasService,
   balanceService: BalanceService,
@@ -263,27 +360,55 @@ async function runPipeline(
   detector: RebalanceDetector,
   intentBuilder: IntentBuilder,
   policyService: PolicyService,
+  guardOracleService: GuardOracleService,
   simulationService: SimulationService,
   executionService: ExecutionService,
   auditStore: AuditStore,
-  circuitBreaker: CircuitBreaker
+  metrics: MetricsCollector,
+  circuitBreaker: CircuitBreaker,
+  alertService: AlertService,
+  riskMonitor: RiskMonitor
 ): Promise<void> {
+  const pipelineStartTime = Date.now()
+  metrics.incrementPipelineRuns()
 
   try {
     // ── OBSERVE: Build market snapshot ──────────────────────────
 
-    // Fetch BOTH oracle feeds for cross-rate derivation
     const feedIds: Hex[] = []
     if (pair.pythFeedIdA) feedIds.push(pair.pythFeedIdA)
     if (pair.pythFeedIdB) feedIds.push(pair.pythFeedIdB)
 
     const oraclePrices = await oracleService.getPrices(feedIds)
-    const oraclePriceA: OraclePrice | null = pair.pythFeedIdA
+    let oraclePriceA: OraclePrice | null = pair.pythFeedIdA
       ? oraclePrices.get(pair.pythFeedIdA) ?? null
       : null
-    const oraclePriceB: OraclePrice | null = pair.pythFeedIdB
+    let oraclePriceB: OraclePrice | null = pair.pythFeedIdB
       ? oraclePrices.get(pair.pythFeedIdB) ?? null
       : null
+
+    if (!oraclePriceB && oraclePriceA) {
+      oraclePriceB = await guardOracleService.deriveQuoteTokenUsdFromBaseToken(
+        pair.tokenA,
+        pair.tokenB,
+        oraclePriceA
+      )
+    }
+
+    if (!oraclePriceA && oraclePriceB) {
+      oraclePriceA = await guardOracleService.deriveQuoteTokenUsdFromBaseToken(
+        pair.tokenB,
+        pair.tokenA,
+        oraclePriceB
+      )
+    }
+
+    if (!oraclePriceA || !oraclePriceB) {
+      const oracleAlert = riskMonitor.recordOracleUnavailable(pair.id)
+      if (oracleAlert) {
+        await alertService.notify(oracleAlert)
+      }
+    }
 
     const blockNumber = poolState.blockNumber
     const [safeBalanceA, safeBalanceB] = await Promise.all([
@@ -310,7 +435,19 @@ async function runPipeline(
       return
     }
 
+    metrics.incrementOpportunities()
     await auditStore.recordOpportunity(opportunity)
+
+    // ── OBSERVE-ONLY GATE ──────────────────────────────────────
+    if (executionMode === 'observe') {
+      log.info(
+        { stage: 'CALCULATE', pair: pair.id, mode: executionMode },
+        'Observe-only mode — opportunity logged, no further action'
+      )
+      metrics.incrementSkip('observe-only mode')
+      await auditStore.recordSkip(pair.id, 'Observe-only mode', snapshot)
+      return
+    }
 
     // ── CALCULATE: Check gas acceptability ──────────────────────
     if (!gasService.isGasPriceAcceptable(config.MAX_GAS_PRICE_MULTIPLIER)) {
@@ -323,6 +460,7 @@ async function runPipeline(
         },
         'Gas price spike — blocking execution'
       )
+      metrics.incrementSkip('Gas price spike')
       await auditStore.recordSkip(pair.id, 'Gas price spike', snapshot)
       return
     }
@@ -343,6 +481,7 @@ async function runPipeline(
         { stage: 'CALCULATE', pair: pair.id },
         'Quote returned zero or failed, skipping'
       )
+      metrics.incrementSkip('Quote failed or zero output')
       await auditStore.recordSkip(pair.id, 'Quote failed or zero output', snapshot)
       return
     }
@@ -351,9 +490,6 @@ async function runPipeline(
     const tokenIn = opportunity.direction === 'BUY_A' ? pair.tokenB : pair.tokenA
     const tokenOut = opportunity.direction === 'BUY_A' ? pair.tokenA : pair.tokenB
 
-    // Derive per-token native (BNB) prices from Pyth USD feeds
-    // tokenA price in BNB = tokenA_USD / BNB_USD
-    // We need both the specific token USD price and BNB USD price
     const tokenInPriceInNative = deriveNativePrice(
       tokenIn.symbol,
       oraclePriceA,
@@ -379,6 +515,7 @@ async function runPipeline(
         },
         'Unable to derive native token valuation from oracle data, skipping'
       )
+      metrics.incrementSkip('Missing native valuation')
       await auditStore.recordSkip(pair.id, 'Missing native valuation from oracle feeds', snapshot)
       return
     }
@@ -401,13 +538,10 @@ async function runPipeline(
 
     if (!profitResult.isProfitable) {
       log.info(
-        {
-          stage: 'CALCULATE',
-          pair: pair.id,
-          reason: profitResult.reason,
-        },
+        { stage: 'CALCULATE', pair: pair.id, reason: profitResult.reason },
         'SKIP: not profitable'
       )
+      metrics.incrementSkip(profitResult.reason)
       await auditStore.recordSkip(pair.id, profitResult.reason, snapshot)
       return
     }
@@ -429,8 +563,16 @@ async function runPipeline(
     // ── VERIFY: Policy pre-validation ──────────────────────────
     const policyResult = await policyService.validateIntent(intent, swapRequest)
     await auditStore.recordPolicyResult(intent.id, pair.id, policyResult)
+    metrics.incrementPolicyChecks(policyResult.passed)
 
     if (!policyResult.passed) {
+      const policyAlert = riskMonitor.recordPolicyRejection(
+        policyResult.error ?? 'Unknown policy rejection'
+      )
+      if (policyAlert) {
+        await alertService.notify(policyAlert)
+      }
+
       log.info(
         {
           stage: 'VERIFY',
@@ -446,6 +588,7 @@ async function runPipeline(
     // ── VERIFY: Fork simulation ────────────────────────────────
     const simResult = await simulationService.simulate(intent, swapRequest)
     await auditStore.recordSimulation(intent.id, pair.id, simResult)
+    metrics.incrementSimulations(simResult.success)
 
     if (!simResult.success) {
       log.info(
@@ -457,13 +600,69 @@ async function runPipeline(
         },
         `REJECTED: simulation failed — ${simResult.revertReason}`
       )
-      circuitBreaker.recordFailure(simResult.revertReason, `simulation:${pair.id}`)
+      const tripped = circuitBreaker.recordFailure(simResult.revertReason, `simulation:${pair.id}`)
+      if (tripped) {
+        await alertService.notify({
+          eventType: 'circuit-breaker-tripped',
+          severity: 'fatal',
+          title: 'Circuit breaker tripped during simulation failures',
+          details: {
+            pair: pair.id,
+            reason: simResult.revertReason,
+          },
+          dedupeKey: 'circuit-breaker-tripped',
+          cooldownMs: 300000,
+        })
+      }
+      return
+    }
+
+    // ── SIMULATE-ONLY GATE ─────────────────────────────────────
+    if (executionMode === 'simulate') {
+      log.info(
+        { stage: 'VERIFY', intentId: intent.id, pair: pair.id, mode: executionMode },
+        'Simulate-only mode — simulation passed, no execution'
+      )
+      metrics.incrementSkip('simulate-only mode')
+      await auditStore.recordSkip(pair.id, 'Simulate-only mode', snapshot)
+      return
+    }
+
+    // ── VERIFY: Runtime pre-submit policy ──────────────────────
+    const oraclePriceForTokenIn =
+      opportunity.direction === 'BUY_A' ? oraclePriceB : oraclePriceA
+
+    const runtimeResult = validatePreSubmit(
+      intent,
+      {
+        executionMode,
+        canaryMaxTradeUsd: config.CANARY_MAX_TRADE_USD,
+        runtimeMaxNotionalUsd: config.RUNTIME_MAX_NOTIONAL_USD,
+        safeAddress: config.SAFE_ADDRESS,
+      },
+      oraclePriceForTokenIn,
+      pipelineStartTime
+    )
+
+    if (!runtimeResult.passed) {
+      log.info(
+        {
+          stage: 'VERIFY',
+          intentId: intent.id,
+          pair: pair.id,
+          reason: runtimeResult.reason,
+        },
+        `REJECTED: runtime policy — ${runtimeResult.reason}`
+      )
+      metrics.incrementSkip(runtimeResult.reason)
+      await auditStore.recordSkip(pair.id, runtimeResult.reason, snapshot)
       return
     }
 
     // ── EXECUTE: Submit on-chain ───────────────────────────────
     const executionRecord = await executionService.execute(intent, swapRequest)
     await auditStore.recordExecution(executionRecord, pair.id)
+    metrics.incrementExecutions(executionRecord.status === 'EXECUTED')
 
     if (executionRecord.status === 'EXECUTED') {
       circuitBreaker.recordSuccess()
@@ -479,24 +678,45 @@ async function runPipeline(
         `✅ SWAP EXECUTED: ${intent.direction} on ${pair.id}`
       )
     } else {
-      circuitBreaker.recordFailure(executionRecord.rejectReason, `execution:${pair.id}`)
+      const tripped = circuitBreaker.recordFailure(executionRecord.rejectReason, `execution:${pair.id}`)
+      if (tripped) {
+        await alertService.notify({
+          eventType: 'circuit-breaker-tripped',
+          severity: 'fatal',
+          title: 'Circuit breaker tripped during execution failures',
+          details: {
+            pair: pair.id,
+            reason: executionRecord.rejectReason,
+          },
+          dedupeKey: 'circuit-breaker-tripped',
+          cooldownMs: 300000,
+        })
+      }
     }
   } catch (error) {
     log.error(
       { stage: 'SYSTEM', error, pair: pair.id },
       'Unhandled error in pipeline'
     )
-    circuitBreaker.recordFailure(error, `pipeline:${pair.id}`)
+    const tripped = circuitBreaker.recordFailure(error, `pipeline:${pair.id}`)
+    if (tripped) {
+      await alertService.notify({
+        eventType: 'circuit-breaker-tripped',
+        severity: 'fatal',
+        title: 'Circuit breaker tripped due to pipeline failures',
+        details: {
+          pair: pair.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        dedupeKey: 'circuit-breaker-tripped',
+        cooldownMs: 300000,
+      })
+    }
   }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-/**
- * Derive a token's price in native BNB.
- * For WBNB: 1:1 (10^18).
- * For others: tokenUSD / bnbUSD, using the available oracle data.
- */
 function deriveNativePrice(
   tokenSymbol: string,
   oraclePriceA: OraclePrice | null,
@@ -504,22 +724,18 @@ function deriveNativePrice(
   pair: TradingPair,
   whichToken: 'A' | 'B'
 ): bigint {
-  // If this IS BNB, 1 BNB = 10^18 wei (1:1 scaling)
   if (tokenSymbol === 'WBNB' || tokenSymbol === 'BNB') {
     return 10n ** 18n
   }
 
-  // Find BNB's USD price and the token's USD price
   const bnbIsA = pair.tokenA.symbol === 'WBNB' || pair.tokenA.symbol === 'BNB'
   const bnbOraclePrice = bnbIsA ? oraclePriceA : oraclePriceB
   const tokenOraclePrice = whichToken === 'A' ? oraclePriceA : oraclePriceB
 
   if (!bnbOraclePrice || !tokenOraclePrice) {
-    // Do not guess price ratios; force pipeline to skip.
     return 0n
   }
 
-  // tokenPrice_in_bnb = tokenUSD / bnbUSD
   const tokenUSD = normalizePythPrice(tokenOraclePrice)
   const bnbUSD = normalizePythPrice(bnbOraclePrice)
 
@@ -546,25 +762,31 @@ async function runPreflightChecks(
   addresses: ReturnType<typeof getAddresses>,
   agentAddress: Address,
   chainId: number,
-  rpcWssUrl: string
+  rpcWssUrl: string,
+  executionMode: ExecutionMode
 ): Promise<void> {
   log.info({ stage: 'INIT' }, 'Running pre-flight checks...')
 
-  // Ensure RPC endpoint is pointing at the expected chain.
+  if (executionMode !== 'observe') {
+    const anvilCheck = spawnSync('anvil', ['--version'], { stdio: 'ignore' })
+    if (anvilCheck.status !== 0) {
+      log.fatal(
+        { stage: 'INIT', executionMode },
+        'FATAL: anvil is required in PATH for simulate/canary/active execution modes'
+      )
+      process.exit(1)
+    }
+  }
+
   const liveChainId = await client.getChainId()
   if (liveChainId !== chainId) {
     log.fatal(
-      {
-        stage: 'INIT',
-        configuredChainId: chainId,
-        liveChainId,
-      },
+      { stage: 'INIT', configuredChainId: chainId, liveChainId },
       'FATAL: RPC endpoint chain ID mismatch'
     )
     process.exit(1)
   }
 
-  // Ensure all critical addresses are deployed contracts.
   const criticalContracts: Array<[string, Address]> = [
     ['Safe', addresses.safe],
     ['EquiliBotModule', addresses.module],
@@ -585,7 +807,6 @@ async function runPreflightChecks(
     }
   }
 
-  // Ensure WebSocket endpoint is live and readable.
   try {
     const wsChain = chainId === 56 ? bsc : bscTestnet
     const wsClient = createPublicClient({

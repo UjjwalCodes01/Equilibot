@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-04-14T11:10:57.592Z",
+  "chainId": 97,
+  "results": [
+    {
+      "name": "rpc-liveness",
+      "ok": true,
+      "detail": "latestBlock=101611035"
+    },
+    {
+      "name": "module-agent-binding",
+      "ok": true,
+      "detail": "moduleAgent=0xDF7156E7B8DDf95d3C80604Dd64b1D24F8046888"
+    },
+    {
+      "name": "module-not-paused",
+      "ok": true,
+      "detail": "paused=false"
+    },
+    {
+      "name": "guard-not-paused",
+      "ok": true,
+      "detail": "paused=false"
+    },
+    {
+      "name": "telemetry-health-endpoint",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "telemetry-status-endpoint",
+      "ok": true,
+      "detail": "HTTP 200"
+    }
+  ],
+  "passed": true
+}

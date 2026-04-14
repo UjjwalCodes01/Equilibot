@@ -123,7 +123,7 @@ export class OracleService {
   }
 
   private async fetchHermesPrices(feedIds: Hex[]): Promise<HermesPriceUpdate[]> {
-    const params = feedIds.map((id) => `ids[]=${id.slice(2)}`).join('&')
+    const params = feedIds.map((id) => `ids[]=${encodeURIComponent(id)}`).join('&')
     const url = `${this.hermesUrl}/v2/updates/price/latest?${params}`
 
     const response = await fetch(url, {

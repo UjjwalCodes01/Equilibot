@@ -13,6 +13,8 @@ export class CircuitBreaker {
   private consecutiveFailures = 0
   private readonly maxFailures: number
   private _tripped = false
+  private _tripReason: string | null = null
+  private _trippedAt: number | null = null
 
   constructor(maxFailures: number) {
     this.maxFailures = maxFailures
@@ -46,6 +48,8 @@ export class CircuitBreaker {
 
     if (this.consecutiveFailures >= this.maxFailures) {
       this._tripped = true
+      this._tripReason = context
+      this._trippedAt = Date.now()
       log.fatal(
         {
           stage: 'SYSTEM',
@@ -69,6 +73,23 @@ export class CircuitBreaker {
   reset(): void {
     this.consecutiveFailures = 0
     this._tripped = false
+    this._tripReason = null
+    this._trippedAt = null
     log.info({ stage: 'SYSTEM' }, 'Circuit breaker manually reset')
+  }
+
+  /** Get full status for telemetry. */
+  getStatus(): {
+    tripped: boolean
+    consecutiveFailures: number
+    tripReason: string | null
+    trippedAt: number | null
+  } {
+    return {
+      tripped: this._tripped,
+      consecutiveFailures: this.consecutiveFailures,
+      tripReason: this._tripReason,
+      trippedAt: this._trippedAt,
+    }
   }
 }

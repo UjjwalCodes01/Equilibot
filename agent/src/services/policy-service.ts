@@ -44,6 +44,11 @@ const ERROR_REASONS: Record<string, string> = {
   'InvalidTokenDecimals()': 'Token decimals out of supported range',
 }
 
+const ERROR_SELECTOR_REASONS: Record<Hex, string> = {
+  // SwapGuard OracleDeviationTooHigh()
+  '0x16c0be26': 'Price deviates too much from oracle',
+}
+
 export class PolicyService {
   private readonly client: PublicClient
   private readonly guardAddress: Address
@@ -166,14 +171,16 @@ export class PolicyService {
 
   private decodeError(error: unknown, intentId: string): PolicyCheckResult {
     let errorMessage = 'Unknown policy rejection'
-    let errorSelector: Hex | null = null
+    const errorSelector = this.extractSelector(error)
+
+    if (errorSelector && ERROR_SELECTOR_REASONS[errorSelector]) {
+      errorMessage = ERROR_SELECTOR_REASONS[errorSelector]
+    }
 
     // Try to decode custom Solidity errors
     if (error instanceof Error && 'data' in error) {
       const errData = (error as { data?: Hex }).data
       if (errData) {
-        errorSelector = errData.slice(0, 10) as Hex
-
         try {
           const decoded = decodeErrorResult({
             abi: swapGuardAbi,
@@ -182,16 +189,12 @@ export class PolicyService {
           const sig = `${decoded.errorName}()`
           errorMessage = ERROR_REASONS[sig] ?? sig
         } catch {
-          // If we can't decode, check if any known selector matches
-          for (const [sig, reason] of Object.entries(ERROR_REASONS)) {
-            if (sig.includes(errorSelector)) {
-              errorMessage = reason
-              break
-            }
+          if (errorSelector && ERROR_SELECTOR_REASONS[errorSelector]) {
+            errorMessage = ERROR_SELECTOR_REASONS[errorSelector]
           }
         }
       }
-    } else if (error instanceof Error) {
+    } else if (error instanceof Error && !errorSelector) {
       errorMessage = error.message
     }
 
@@ -210,5 +213,23 @@ export class PolicyService {
       error: errorMessage,
       errorSelector,
     }
+  }
+
+  private extractSelector(error: unknown): Hex | null {
+    if (error instanceof Error && 'data' in error) {
+      const errData = (error as { data?: Hex }).data
+      if (errData && errData.startsWith('0x') && errData.length >= 10) {
+        return errData.slice(0, 10) as Hex
+      }
+    }
+
+    if (error instanceof Error) {
+      const match = error.message.match(/0x[a-fA-F0-9]{8}/)
+      if (match) {
+        return match[0] as Hex
+      }
+    }
+
+    return null
   }
 }

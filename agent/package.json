@@ -5,29 +5,39 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "env:use:testnet": "bash scripts/use-env-profile.sh testnet",
+    "env:use:mainnet": "bash scripts/use-env-profile.sh mainnet",
     "start": "node dist/index.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "preflight:runtime": "tsx scripts/runtime-preflight.ts",
+    "verify:kms": "tsx scripts/verify-kms-signer.ts",
+    "drill:incident": "tsx scripts/incident-drill.ts",
+    "soak:run": "tsx scripts/soak-runner.ts",
+    "phase3:closeout": "tsx scripts/phase3-closeout.ts",
+    "phase3:closeout:apply": "tsx scripts/phase3-closeout.ts --apply",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/"
   },
   "dependencies": {
-    "viem": "^2.27.0",
+    "@aws-sdk/client-kms": "^3.1030.0",
     "@pythnetwork/hermes-client": "^1.4.0",
     "dotenv": "^16.4.7",
     "pino": "^9.6.0",
-    "zod": "^3.24.0",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "viem": "^2.27.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
-    "tsx": "^4.19.0",
-    "typescript": "^5.7.0",
+    "@eslint/js": "^9.0.0",
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
-    "vitest": "^3.1.0",
     "eslint": "^9.0.0",
-    "@eslint/js": "^9.0.0",
-    "typescript-eslint": "^8.0.0"
+    "pm2": "^6.0.14",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.1.0"
   }
 }

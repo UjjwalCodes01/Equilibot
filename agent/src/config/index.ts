@@ -33,7 +33,10 @@ const envSchema = z.object({
   // Agent wallet
   AGENT_PRIVATE_KEY: hexSchema.optional(),
   SIGNER_MODE: z.enum(['local', 'managed']).default('local'),
+  MANAGED_SIGNER_PROVIDER: z.enum(['aws-kms']).default('aws-kms'),
   MANAGED_SIGNER_ADDRESS: addressSchema.optional(),
+  AWS_REGION: z.string().min(1).optional(),
+  AWS_KMS_KEY_ID: z.string().min(1).optional(),
   SECURITY_REVIEW_SIGNED_OFF: z.coerce.boolean().default(false),
 
   // Phase 1 contracts
@@ -56,6 +59,28 @@ const envSchema = z.object({
   MAX_CONSECUTIVE_FAILURES: z.coerce.number().int().min(1).default(5),
   SIMULATION_TIMEOUT_MS: z.coerce.number().int().min(1000).default(10000),
   MAX_GAS_PRICE_MULTIPLIER: z.coerce.number().min(1.0).default(3.0),
+
+  // Phase 3: Execution mode ladder
+  EXECUTION_MODE: z.enum(['observe', 'simulate', 'canary', 'active']).default('observe'),
+  CANARY_MAX_TRADE_USD: z.coerce.number().min(1).default(50),
+  RUNTIME_MAX_NOTIONAL_USD: z.coerce.number().min(0).default(0), // 0 = disabled
+
+  // Telemetry
+  TELEMETRY_PORT: z.coerce.number().int().min(1024).max(65535).default(9100),
+  TELEMETRY_BIND_ADDRESS: z.string().default('127.0.0.1'),
+  TELEMETRY_ALLOWED_ORIGIN: z.string().default('http://localhost:3000'),
+  TELEMETRY_API_TOKEN: z.string().min(16).optional(),
+
+  // Alerting and runtime health monitoring
+  ALERT_WEBHOOK_URL: z.string().url().optional(),
+  ALERT_MIN_SEVERITY: z.enum(['info', 'warn', 'error', 'fatal']).default('warn'),
+  ALERT_DEDUP_COOLDOWN_MS: z.coerce.number().int().min(1000).default(300000),
+  ALERT_POLICY_REJECTION_WINDOW_MIN: z.coerce.number().int().min(1).default(10),
+  ALERT_POLICY_REJECTION_THRESHOLD: z.coerce.number().int().min(1).default(5),
+  ALERT_ORACLE_NULL_WINDOW_MIN: z.coerce.number().int().min(1).default(10),
+  ALERT_ORACLE_NULL_THRESHOLD: z.coerce.number().int().min(1).default(5),
+  ALERT_RPC_CHECK_INTERVAL_MS: z.coerce.number().int().min(5000).default(30000),
+  ALERT_RPC_FAILURE_THRESHOLD: z.coerce.number().int().min(1).default(3),
 })
 
 export type Config = z.infer<typeof envSchema>
@@ -90,6 +115,15 @@ export function getConfig(): Config {
     extraErrors.push('RPC_PRIVATE_URL is required when SIGNER_MODE=managed')
   }
 
+  if (parsed.SIGNER_MODE === 'managed' && parsed.MANAGED_SIGNER_PROVIDER === 'aws-kms') {
+    if (!parsed.AWS_REGION) {
+      extraErrors.push('AWS_REGION is required when SIGNER_MODE=managed and MANAGED_SIGNER_PROVIDER=aws-kms')
+    }
+    if (!parsed.AWS_KMS_KEY_ID) {
+      extraErrors.push('AWS_KMS_KEY_ID is required when SIGNER_MODE=managed and MANAGED_SIGNER_PROVIDER=aws-kms')
+    }
+  }
+
   // Hard safety gates for mainnet operation.
   if (parsed.CHAIN_ID === 56 && parsed.SIGNER_MODE !== 'managed') {
     extraErrors.push('Mainnet requires SIGNER_MODE=managed (local private key signer is blocked)')
@@ -97,6 +131,15 @@ export function getConfig(): Config {
 
   if (parsed.CHAIN_ID === 56 && !parsed.SECURITY_REVIEW_SIGNED_OFF) {
     extraErrors.push('Mainnet requires SECURITY_REVIEW_SIGNED_OFF=true before startup')
+  }
+
+  if (parsed.CHAIN_ID === 56 && (parsed.EXECUTION_MODE === 'canary' || parsed.EXECUTION_MODE === 'active')) {
+    if (!parsed.ALERT_WEBHOOK_URL) {
+      extraErrors.push('Mainnet canary/active requires ALERT_WEBHOOK_URL for incident alerting')
+    }
+    if (!parsed.TELEMETRY_API_TOKEN) {
+      extraErrors.push('Mainnet canary/active requires TELEMETRY_API_TOKEN to secure telemetry endpoints')
+    }
   }
 
   if (extraErrors.length > 0) {

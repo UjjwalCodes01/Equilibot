@@ -1,0 +1,12 @@
+services:
+  equilibot-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: equilibot-agent
+    env_file:
+      - .env
+    restart: unless-stopped
+    command: ["node", "dist/index.js"]
+    ports:
+      - "127.0.0.1:${TELEMETRY_PORT:-9100}:9100"
