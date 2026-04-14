@@ -60,6 +60,20 @@ import {
   TreasuryHealthData,
   useDashboardData,
 } from "@/lib/dashboard-data";
+import { useSwapIntent } from "@/hooks/useSwapIntent";
+import { SwapIntentForm } from "./swap-intent-form";
+import { SwapSimulation } from "./swap-simulation";
+import { SwapExecution } from "./swap-execution";
+import { AutonomousTaskRunner, RapidCommandDeck } from "./action-lab";
+import {
+  GlassPanel as GlassPanelUI,
+  StatCard as StatCardUI,
+  EmptyState as EmptyStateUI,
+  SectionLabel,
+} from "./ui-components";
+
+// Re-export for external use
+export { GlassPanelUI as GlassPanel, StatCardUI as StatCard, EmptyStateUI as EmptyState };
 
 type FrameProps = Readonly<{
   eyebrow: string;
@@ -134,19 +148,6 @@ function StatCard({ label, value, suffix }: Readonly<{ label: string; value: str
   );
 }
 
-function SectionLabel({ icon: Icon, title, description }: Readonly<{ icon: React.ComponentType<{ className?: string }>; title: string; description: string }>) {
-  return (
-    <div className="mb-4 flex items-start gap-3">
-      <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-2xl border border-amber-400/25 bg-amber-400/10 text-amber-200">
-        <Icon className="h-5 w-5" />
-      </div>
-      <div>
-        <h5 className="font-medium text-stone-50">{title}</h5>
-        <p className="text-sm leading-6 text-zinc-400">{description}</p>
-      </div>
-    </div>
-  );
-}
 
 function LivePill({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
@@ -749,6 +750,8 @@ export function NexusPage() {
         <StatCard label="Mode" value="Testnet" />
       </div>
 
+      <AutonomousTaskRunner />
+
       <div className="grid gap-6 xl:grid-cols-[0.82fr_1.18fr]">
         <GlassPanel title="Thinking state" subtitle="Lottie slot for the real agent thinking animation asset.">
           <div className="scrollbar-hidden max-h-112 space-y-4 overflow-y-auto pr-1">
@@ -813,40 +816,111 @@ export function LiquidityTopologyPage() {
 
 export function StrategyStudioPage() {
   const data = useDashboardData("strategyStudio");
+  const {
+    activeIntent,
+    stage,
+    isLoading,
+    submitSwapDraft,
+    approveSwap,
+    rejectSwap,
+    resetFlow,
+    history,
+  } = useSwapIntent();
 
   return (
     <PageFrame
       eyebrow="Strategy Studio"
-      title="No-code guardrail composer"
-      description="Adjust SwapGuard policy components visually. Controls here are only wired to live strategy data, not fake presets."
-      actions={<TransparentButton href="/safety-vault">Review guardrails</TransparentButton>}
+      title="Treasury rebalancing lab"
+      description="Create swap intents, simulate execution through SwapGuard, and execute via Safe with full audit trail."
+      actions={<TransparentButton href="/governance-audit">View execution history</TransparentButton>}
     >
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Controls" value={data?.controls?.length ?? 0} />
-        <StatCard label="Guard rails" value={data?.guardLabels?.length ?? 0} />
-        <StatCard label="Summary" value={data?.summary ?? "Awaiting draft"} />
-        <StatCard label="Mode" value="Drag-and-drop" />
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
-        <GlassPanel title="Policy canvas" subtitle="Move the cards to reshape live policy inputs once the strategy engine is connected.">
-          <StrategyControls data={data} />
-        </GlassPanel>
-
-        <GlassPanel title="Guardrail summary" subtitle="Composable policy components should be readable at a glance by DAO operators.">
-          <div className="space-y-4">
-            {(data?.guardLabels ?? []).map((label) => (
-              <div key={label} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
-                <span className="text-zinc-300">{label}</span>
-                <ChevronRight className="h-4 w-4 text-zinc-500" />
-              </div>
-            ))}
-            {!data?.guardLabels?.length ? (
-              <EmptyState title="No guard labels connected" detail="Attach live guard metadata to explain the current slippage and route policy in plain language." />
-            ) : null}
+      {activeIntent ? (
+        // Show swap workflow based on current stage
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Stage" value={stage.toUpperCase()} />
+            <StatCard label="Input token" value={activeIntent.tokenIn.symbol} />
+            <StatCard label="Output token" value={activeIntent.tokenOut.symbol} />
+            <StatCard label="Amount" value={activeIntent.amountIn} />
           </div>
-        </GlassPanel>
-      </div>
+
+          {stage === "simulating" && (
+            <GlassPanel title="Simulating swap" subtitle="Fetching quote and running safety checks...">
+              <div className="flex flex-col items-center justify-center gap-3 py-12">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-zinc-600 border-t-amber-400" />
+                <p className="text-sm text-zinc-400">Retrieving quote from DEX aggregator</p>
+              </div>
+            </GlassPanel>
+          )}
+
+          {stage === "simulated" && activeIntent && (
+            <SwapSimulation
+              intent={activeIntent}
+              onApprove={approveSwap}
+              onReject={rejectSwap}
+              isExecuting={isLoading}
+            />
+          )}
+
+          {(stage === "executing" || stage === "executed") && activeIntent && (
+            <SwapExecution intent={activeIntent} onReset={resetFlow} />
+          )}
+        </div>
+      ) : (
+        // Show default strategy studio or new swap form
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard label="Controls" value={data?.controls?.length ?? 0} />
+            <StatCard label="Guard rails" value={data?.guardLabels?.length ?? 0} />
+            <StatCard label="Recent swaps" value={history.length} />
+            <StatCard label="Mode" value="Manual + Auto" />
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-[1fr_0.9fr]">
+            {/* Swap intent form */}
+            <SwapIntentForm data={data} onSubmit={submitSwapDraft} isLoading={isLoading} />
+
+            {/* Guards and history */}
+            <div className="space-y-6">
+              <GlassPanel title="Policy guardrails" subtitle="Active SwapGuard rules for this session.">
+                <div className="space-y-4">
+                  {(data?.guardLabels ?? []).map((label) => (
+                    <div key={label} className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/25 px-4 py-3">
+                      <span className="text-sm text-zinc-300">{label}</span>
+                      <ChevronRight className="h-4 w-4 text-zinc-500" />
+                    </div>
+                  ))}
+                  {!data?.guardLabels?.length ? (
+                    <p className="text-xs text-zinc-500">No guardrails configured. Review Safety Vault to set policies.</p>
+                  ) : null}
+                </div>
+              </GlassPanel>
+
+              <GlassPanel title="Recent swaps" subtitle={`${history.length} completed transactions`}>
+                {history.length === 0 ? (
+                  <p className="text-xs text-zinc-500">No swap history yet. Execute your first swap above.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {history.slice(0, 3).map((swap) => (
+                      <div key={swap.id} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-medium text-stone-50">
+                              {swap.tokenIn.symbol} → {swap.tokenOut.symbol}
+                            </p>
+                            <p className="text-xs text-zinc-500">{swap.id.slice(0, 8)}</p>
+                          </div>
+                          <span className="text-xs font-mono text-green-400">{swap.amountIn}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </GlassPanel>
+            </div>
+          </div>
+        </div>
+      )}
     </PageFrame>
   );
 }
@@ -1022,5 +1096,16 @@ export function AgentIdentityPage() {
 export function TerminalPage() {
   const data = useDashboardData("terminal");
 
-  return <PageFrame eyebrow="Terminal" title="Advanced view" description="A keyboard-first, high-density surface for raw RPC logs and agentic system health."><TerminalView data={data} /></PageFrame>;
+  return (
+    <PageFrame
+      eyebrow="Terminal"
+      title="Advanced view"
+      description="A keyboard-first, high-density surface for raw RPC logs and agentic system health."
+    >
+      <div className="space-y-6">
+        <RapidCommandDeck />
+        <TerminalView data={data} />
+      </div>
+    </PageFrame>
+  );
 }

@@ -2,19 +2,29 @@ import { NextResponse } from "next/server";
 
 const TELEMETRY_BASE_URL = process.env.AGENT_TELEMETRY_BASE_URL ?? "http://127.0.0.1:9100";
 
-export async function GET(request: Request, context: { params: Promise<{ path: string[] }> }) {
+type AgentProxyContext = { params: Promise<{ path: string[] }> };
+
+async function proxyToAgent(request: Request, context: AgentProxyContext, method: "GET" | "POST") {
   const { path } = await context.params;
   const targetUrl = new URL(path.join("/"), `${TELEMETRY_BASE_URL.replace(/\/$/, "")}/`);
   targetUrl.search = new URL(request.url).search;
 
   try {
-    const response = await fetch(targetUrl, { cache: "no-store" });
-    const body = await response.text();
-    return new NextResponse(body, {
+    const response = await fetch(targetUrl, {
+      method,
+      cache: "no-store",
+      headers: {
+        "content-type": request.headers.get("content-type") ?? "application/json; charset=utf-8",
+      },
+      body: method === "POST" ? await request.text() : undefined,
+    });
+
+    return new NextResponse(response.body, {
       status: response.status,
       headers: {
         "content-type": response.headers.get("content-type") ?? "application/json; charset=utf-8",
-        "cache-control": "no-store",
+        "cache-control": response.headers.get("cache-control") ?? "no-store",
+        "x-accel-buffering": "no",
       },
     });
   } catch (error) {
@@ -27,4 +37,12 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
       { status: 502 },
     );
   }
+}
+
+export async function GET(request: Request, context: AgentProxyContext) {
+  return proxyToAgent(request, context, "GET");
+}
+
+export async function POST(request: Request, context: AgentProxyContext) {
+  return proxyToAgent(request, context, "POST");
 }

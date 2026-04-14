@@ -77,6 +77,8 @@ export type StrategyStudioData = {
   controls?: StrategyControl[];
   summary?: string;
   guardLabels?: string[];
+  activeSwap?: SwapIntent;
+  swapHistory?: SwapIntent[];
 };
 
 export type TreasuryMetric = {
@@ -146,6 +148,44 @@ export type IncentiveArbitrageData = {
   cells?: ArbitrageHeatCell[];
   chainLabel?: string;
   updatedAt?: string;
+};
+
+export type Token = {
+  symbol: string;
+  address: string;
+  decimals: number;
+  balance?: string;
+};
+
+export type DEXRoute = {
+  id: string;
+  dex: string;
+  path: Token[];
+  gasEstimate?: number;
+  priceImpact?: number;
+};
+
+export type SwapQuote = {
+  inputAmount: string;
+  outputAmount: string;
+  minOutputAmount: string;
+  priceImpact: number;
+  route: DEXRoute;
+  updatedAt: string;
+};
+
+export type SwapIntent = {
+  id: string;
+  tokenIn: Token;
+  tokenOut: Token;
+  amountIn: string;
+  quote?: SwapQuote;
+  slippageTolerance: number;
+  status: "draft" | "simulating" | "simulated" | "executing" | "executed" | "rejected";
+  safeTransactionHash?: string;
+  onChainTxHash?: string;
+  reason?: string;
+  createdAt: string;
 };
 
 export type IdentityMetric = {
