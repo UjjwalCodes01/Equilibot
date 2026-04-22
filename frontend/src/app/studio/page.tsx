@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { motion } from 'framer-motion'
 import { useState, useCallback } from 'react'
 import { Blocks, TrendingUp, ShieldCheck, Zap, ArrowDown, Play, Loader2, Plus, Trash2, Code, ChevronDown, Sparkles } from 'lucide-react'
+import { getAiRequestHeaders } from '@/lib/ai-client'
 
 interface Block {
   id: string
@@ -58,7 +59,7 @@ export default function StudioPage() {
     try {
       const res = await fetch('/api/ai/strategy', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAiRequestHeaders(),
         body: JSON.stringify({ prompt: aiPrompt }),
       })
       const json = await res.json()

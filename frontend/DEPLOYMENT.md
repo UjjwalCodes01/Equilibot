@@ -20,8 +20,8 @@ npm run dev
 2. Import the repo in [Vercel](https://vercel.com)
 3. Set the Root Directory to `frontend`
 4. Add these environment variables in Vercel's dashboard:
-   - `AGENT_TELEMETRY_BASE_URL` — URL of your deployed agent (e.g., `https://your-agent.onrender.com`)
-   - `AGENT_TELEMETRY_API_TOKEN` — The token matching your agent's `.env`
+   - `AGENT_TELEMETRY_BASE_URL` — URL of your deployed agent (e.g., `https://equilibot.onrender.com`)
+   - `AGENT_TELEMETRY_API_TOKEN` — Must match the agent's `TELEMETRY_API_TOKEN` (recommended)
    - `GEMINI_API_KEY` — Your Google AI Studio API key (powers Nexus Narrator, Audit Explainer, Studio AI Builder)
 5. Deploy!
 
@@ -38,9 +38,10 @@ npm run dev
 
 ### Deploy to Railway / Render
 1. Set the Root Directory to `agent`
-2. Set the Start Command to `npm start` or `npx tsx src/index.ts`
+2. Set the Start Command to:
+   - `TELEMETRY_PORT=$PORT TELEMETRY_BIND_ADDRESS=0.0.0.0 npm start`
 3. Add the same `.env` variables from the agent's `.env` file as environment variables in the hosting dashboard
-4. The telemetry server will start on port 9100
+4. The telemetry server will start on `TELEMETRY_PORT` (Render sets this via `$PORT`)
 
 ## Connecting Frontend ↔ Agent
 The frontend proxies all `/api/agent/*` requests to the agent's telemetry server.

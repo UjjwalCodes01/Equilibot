@@ -429,9 +429,10 @@ async function runPipeline(
       )
     }
 
-    // Stablecoin synthetic $1.00 fallback — BUSD/USDT/USDC are always pegged.
-    // Pyth feed and on-chain guard oracle may be stale for deprecated coins like BUSD.
-    const KNOWN_STABLECOINS = new Set(['BUSD', 'USDT', 'USDC', 'DAI'])
+    // Stablecoin synthetic $1.00 fallback for actively-supported stables only.
+    // Intentionally excludes deprecated assets like BUSD to avoid false opportunities
+    // when external feeds are stale or unavailable.
+    const KNOWN_STABLECOINS = new Set(['USDT', 'USDC', 'DAI'])
     const SYNTHETIC_STABLE_PRICE: OraclePrice = {
       price: 100_000_000n,
       confidence: 500_000n,

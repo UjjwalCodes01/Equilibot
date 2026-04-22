@@ -7,10 +7,23 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 
-const AGENT_BASE_URL = process.env.AGENT_TELEMETRY_BASE_URL || 'http://127.0.0.1:9100'
+const IS_PROD = process.env.NODE_ENV === 'production'
+const AGENT_BASE_URL = process.env.AGENT_TELEMETRY_BASE_URL ?? (IS_PROD ? null : 'http://127.0.0.1:9100')
 const API_TOKEN = process.env.AGENT_TELEMETRY_API_TOKEN || ''
 
+function configError() {
+  return NextResponse.json(
+    {
+      error: 'Agent telemetry is not configured',
+      details: 'Set AGENT_TELEMETRY_BASE_URL (and optionally AGENT_TELEMETRY_API_TOKEN) in the server environment.',
+    },
+    { status: 500 }
+  )
+}
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  if (!AGENT_BASE_URL) return configError()
+
   const { path } = await params
   const agentPath = `/api/${path.join('/')}`
   const url = new URL(agentPath, AGENT_BASE_URL)
@@ -26,7 +39,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
       headers['Authorization'] = `Bearer ${API_TOKEN}`
     }
 
-    const res = await fetch(url.toString(), { headers, cache: 'no-store' })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 6000)
+    const res = await fetch(url.toString(), { headers, cache: 'no-store', signal: controller.signal })
+    clearTimeout(timeout)
     const body = await res.text()
 
     return new NextResponse(body, {
@@ -42,6 +58,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ path
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
+  if (!AGENT_BASE_URL) return configError()
+
   const { path } = await params
   const agentPath = `/api/${path.join('/')}`
   const url = new URL(agentPath, AGENT_BASE_URL)
@@ -53,11 +71,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ pat
       headers['Authorization'] = `Bearer ${API_TOKEN}`
     }
 
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 6000)
     const res = await fetch(url.toString(), {
       method: 'POST',
       headers,
       body,
+      signal: controller.signal,
     })
+    clearTimeout(timeout)
     const responseBody = await res.text()
 
     return new NextResponse(responseBody, {

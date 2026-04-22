@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Sparkles, Loader2 } from 'lucide-react'
 import type { AuditStage } from '@/lib/api/types'
+import { getAiRequestHeaders } from '@/lib/ai-client'
 
 const STAGE_BADGE: Record<AuditStage, string> = {
   OPPORTUNITY: 'badge-observe',
@@ -47,7 +48,7 @@ export function ThoughtLog() {
     try {
       const res = await fetch('/api/ai/narrate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAiRequestHeaders(),
         body: JSON.stringify({ stage, pair, data: entryData }),
       })
       const json = await res.json()

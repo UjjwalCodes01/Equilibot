@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { FileSearch, Download, Filter, ChevronDown, ChevronRight, ExternalLink, Sparkles, Loader2 } from 'lucide-react'
 import type { AuditStage } from '@/lib/api/types'
 import { EXPLORER_TX_URL } from '@/lib/contracts/config'
+import { getAiRequestHeaders } from '@/lib/ai-client'
 
 const STAGE_STYLES: Record<AuditStage, { badge: string; dot: string }> = {
   OPPORTUNITY: { badge: 'badge-observe', dot: 'bg-indigo-glow' },
@@ -50,7 +51,7 @@ export default function AuditsPage() {
     try {
       const res = await fetch('/api/ai/explain', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAiRequestHeaders(),
         body: JSON.stringify({ entry }),
       })
       const json = await res.json()
