@@ -67,5 +67,8 @@ export function triggerTask(taskId: AutonomousTaskId): Promise<TaskRunResponse> 
 }
 
 export function fetchHealth(): Promise<{ status: string; uptime: number }> {
-  return fetch('/api/agent/health').then((r) => r.json())
+  return fetchAgentStatus().then((status) => ({
+    status: status.executionMode,
+    uptime: status.uptime,
+  }))
 }
