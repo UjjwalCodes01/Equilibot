@@ -48,7 +48,7 @@ async function generateWithModel(
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.3,
-      maxOutputTokens: 512,
+      maxOutputTokens: 4096,
       topP: 0.8,
     },
   })
