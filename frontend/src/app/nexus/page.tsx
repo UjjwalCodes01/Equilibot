@@ -20,7 +20,10 @@ export default function NexusPage() {
         <div className="grid grid-cols-1 xl:grid-cols-5 gap-5 mt-5">
           {/* Left: Agent Thought Log */}
           <div className="xl:col-span-2 flex flex-col gap-4">
-            <div className="glass-panel flex-1 flex flex-col overflow-hidden" style={{ minHeight: '520px' }}>
+            <div
+              className="glass-panel flex-1 flex flex-col overflow-hidden h-[72vh] max-h-[820px]"
+              style={{ minHeight: '520px' }}
+            >
               <div className="px-5 py-3.5 border-b border-glass-border flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-emerald-glow status-pulse" />
                 <h3 className="text-sm font-semibold text-arctic">Agent Thought Stream</h3>

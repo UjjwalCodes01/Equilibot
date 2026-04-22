@@ -6,7 +6,8 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
-const MODEL_NAME = 'gemini-3.0-flash'
+const FALLBACK_MODEL = 'gemini-2.0-flash'
+const MODEL_NAME = process.env.GEMINI_MODEL?.trim() || FALLBACK_MODEL
 
 let _genAI: GoogleGenerativeAI | null = null
 
@@ -24,7 +25,24 @@ function getClient(): GoogleGenerativeAI {
 
 export async function callGemini(prompt: string): Promise<string> {
   const client = getClient()
-  const model = client.getGenerativeModel({ model: MODEL_NAME })
+
+  try {
+    return await generateWithModel(client, MODEL_NAME, prompt)
+  } catch (error) {
+    // If a custom model is configured but unavailable, fall back to a known-good model.
+    if (MODEL_NAME !== FALLBACK_MODEL && isModelNotFoundError(error)) {
+      return generateWithModel(client, FALLBACK_MODEL, prompt)
+    }
+    throw error
+  }
+}
+
+async function generateWithModel(
+  client: GoogleGenerativeAI,
+  modelName: string,
+  prompt: string
+): Promise<string> {
+  const model = client.getGenerativeModel({ model: modelName })
 
   const result = await model.generateContent({
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -35,6 +53,10 @@ export async function callGemini(prompt: string): Promise<string> {
     },
   })
 
-  const response = result.response
-  return response.text()
+  return result.response.text()
+}
+
+function isModelNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return /404|not found|models\//i.test(error.message)
 }

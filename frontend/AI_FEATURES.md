@@ -90,5 +90,5 @@ The **Strategy Studio** now has a **✨ AI Strategy Builder** input at the top o
 
 - **No background API calls:** Gemini is only called when you click a button. If you close the tab or don't interact, zero API calls are made.
 - **Graceful degradation:** If `GEMINI_API_KEY` is missing or invalid, the features simply won't show up. All other dashboard functionality works normally.
-- **Model used:** `gemini-3.0-flash` — the latest fast model, optimised for cost and latency.
+- **Model used:** `gemini-2.0-flash` by default (or `GEMINI_MODEL` override if configured).
 - **API key security:** The key lives only in `frontend/.env.local` which is gitignored and never sent to the browser. It is read server-side by Next.js API routes only.
