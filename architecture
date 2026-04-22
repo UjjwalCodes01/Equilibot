@@ -104,3 +104,5 @@ Non-Goals
 - The LLM does not directly sign raw treasury transactions.
 - The system does not execute on unapproved routers or unsupported tokens.
 - The frontend is not a source of truth for policy; on-chain policy is.
+
+
