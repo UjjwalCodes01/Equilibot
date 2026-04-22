@@ -1,12 +1,12 @@
 /**
  * Shared Gemini AI client for server-side API routes.
- * Uses gemini-2.0-flash for cost efficiency.
+ * Uses gemini-2.5-flash — the current stable GA model (verified 2026-04-22).
  * NEVER import this from client components — it reads process.env server-side only.
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
-const FALLBACK_MODEL = 'gemini-2.0-flash'
+const FALLBACK_MODEL = 'gemini-2.5-flash'
 const MODEL_NAME = process.env.GEMINI_MODEL?.trim() || FALLBACK_MODEL
 
 let _genAI: GoogleGenerativeAI | null = null
