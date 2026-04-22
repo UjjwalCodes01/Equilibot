@@ -22,7 +22,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1030.0",
-    "@bnb-chain/greenfield-js-sdk": "^2.2.2",
     "@pythnetwork/hermes-client": "^1.4.0",
     "dotenv": "^16.4.7",
     "pino": "^9.6.0",
@@ -35,7 +34,6 @@
     "@types/node": "^22.0.0",
     "@types/uuid": "^10.0.0",
     "eslint": "^9.0.0",
-    "pm2": "^6.0.14",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.0.0",
