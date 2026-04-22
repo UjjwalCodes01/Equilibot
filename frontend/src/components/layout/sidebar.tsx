@@ -17,11 +17,12 @@ import {
   FlaskConical,
   ChevronLeft,
   ChevronRight,
+  Sparkles,
 } from 'lucide-react'
-import { useState } from 'react'
 
 const NAV_ITEMS = [
-  { href: '/', label: 'The Nexus', icon: Zap, description: 'Command Center' },
+  { href: '/', label: 'Demo', icon: Sparkles, description: 'Judge Onboarding' },
+  { href: '/nexus', label: 'The Nexus', icon: Zap, description: 'Command Center' },
   { href: '/safety', label: 'Safety', icon: Shield, description: 'Guardrails' },
   { href: '/portfolio', label: 'Portfolio', icon: PieChart, description: 'Active Management' },
   { href: '/audits', label: 'Audits', icon: FileSearch, description: 'Governance' },
@@ -33,9 +34,13 @@ const NAV_ITEMS = [
   { href: '/sandbox', label: 'Sandbox', icon: FlaskConical, description: 'Simulator' },
 ] as const
 
-export function Sidebar() {
+interface SidebarProps {
+  collapsed: boolean
+  onToggle: () => void
+}
+
+export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname()
-  const [collapsed, setCollapsed] = useState(false)
 
   return (
     <motion.aside
@@ -73,7 +78,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              id={`nav-${item.href.replace('/', '') || 'nexus'}`}
+              id={`nav-${item.href.replace('/', '') || 'demo'}`}
               className={cn(
                 'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 group relative',
                 isActive
@@ -100,7 +105,7 @@ export function Sidebar() {
       {/* Collapse Toggle */}
       <div className="px-2 pb-3 border-t border-glass-border pt-3">
         <button
-          onClick={() => setCollapsed(!collapsed)}
+          onClick={onToggle}
           className="flex items-center justify-center w-full py-2 rounded-xl text-mist hover:text-arctic hover:bg-glass-hover transition-colors"
           id="sidebar-toggle"
         >

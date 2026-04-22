@@ -4,10 +4,10 @@ import { Topbar } from '@/components/layout/topbar'
 import { PageWrapper } from '@/components/layout/page-wrapper'
 import { useAuditLog } from '@/hooks/use-telemetry'
 import { cn } from '@/lib/utils'
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { FileSearch, Download, Filter, ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
-import type { AuditEntry, AuditStage } from '@/lib/api/types'
+import { FileSearch, Download, Filter, ChevronDown, ChevronRight, ExternalLink, Sparkles, Loader2 } from 'lucide-react'
+import type { AuditStage } from '@/lib/api/types'
 import { EXPLORER_TX_URL } from '@/lib/contracts/config'
 
 const STAGE_STYLES: Record<AuditStage, { badge: string; dot: string }> = {
@@ -26,6 +26,7 @@ export default function AuditsPage() {
   const [stageFilter, setStageFilter] = useState<AuditStage | 'ALL'>('ALL')
   const [expanded, setExpanded] = useState<string | null>(null)
   const { data, isLoading } = useAuditLog(date)
+  const [explanations, setExplanations] = useState<Map<string, { loading: boolean; text: string | null }>>(new Map())
 
   const entries = (data?.entries ?? []).filter(
     (e) => stageFilter === 'ALL' || e.stage === stageFilter
@@ -40,6 +41,24 @@ export default function AuditsPage() {
     a.click()
     URL.revokeObjectURL(url)
   }
+
+  const handleExplain = useCallback(async (key: string, entry: { stage: string; pair: string | null; intentId: string | null; timestamp: string; data: Record<string, unknown> }) => {
+    if (explanations.has(key)) return
+
+    setExplanations((prev) => new Map(prev).set(key, { loading: true, text: null }))
+
+    try {
+      const res = await fetch('/api/ai/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry }),
+      })
+      const json = await res.json()
+      setExplanations((prev) => new Map(prev).set(key, { loading: false, text: json.explanation ?? 'Unable to analyze this entry.' }))
+    } catch {
+      setExplanations((prev) => new Map(prev).set(key, { loading: false, text: 'AI analysis unavailable.' }))
+    }
+  }, [explanations])
 
   return (
     <>
@@ -106,6 +125,7 @@ export default function AuditsPage() {
               const isOpen = expanded === key
               const style = STAGE_STYLES[entry.stage] || STAGE_STYLES.SKIP!
               const txHash = entry.data?.txHash as string | undefined
+              const explanation = explanations.get(key)
 
               return (
                 <motion.div
@@ -156,6 +176,43 @@ export default function AuditsPage() {
                           <pre className="text-xs text-mist/80 font-mono bg-space-950 rounded-lg p-3 overflow-x-auto max-h-[300px]">
                             {JSON.stringify(entry.data, null, 2)}
                           </pre>
+
+                          {/* AI Explain Button */}
+                          {!explanation && (
+                            <button
+                              onClick={() => handleExplain(key, {
+                                stage: entry.stage,
+                                pair: entry.pair ?? null,
+                                intentId: entry.intentId ?? null,
+                                timestamp: entry.timestamp,
+                                data: entry.data,
+                              })}
+                              className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gold-500/10 text-gold-400 text-xs hover:bg-gold-500/20 transition-colors"
+                              id={`explain-${i}`}
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                              Analyze with AI
+                            </button>
+                          )}
+                          {explanation?.loading && (
+                            <div className="mt-3 flex items-center gap-1.5 text-xs text-mist/60">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              Analyzing decision…
+                            </div>
+                          )}
+                          {explanation?.text && (
+                            <motion.div
+                              initial={{ opacity: 0, y: 4 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="mt-3 px-4 py-3 rounded-lg bg-gold-500/5 border border-gold-500/15"
+                            >
+                              <div className="flex items-center gap-1.5 mb-2">
+                                <Sparkles className="w-3.5 h-3.5 text-gold-400" />
+                                <span className="text-xs font-semibold text-gold-400">AI Analysis</span>
+                              </div>
+                              <p className="text-xs text-arctic/70 leading-relaxed">{explanation.text}</p>
+                            </motion.div>
+                          )}
                         </div>
                       </motion.div>
                     )}

@@ -76,10 +76,11 @@ export function getPairDefinitions(chainId: number): PairDefinition[] {
         id: 'WBNB-BUSD-500',
         tokenA: TOKENS_TESTNET.WBNB!,
         tokenB: TOKENS_TESTNET.BUSD!,
-        feeTier: 500, // 0.05%
+        feeTier: 500,
         pythPriceFeedIdA: PYTH_FEED_IDS['BNB/USD'],
-        // No direct BUSD/USD feed is available in Hermes on testnet.
-        // The pipeline derives BUSD/USD from on-chain guard oracle quotes.
+        // BUSD Pyth feed returns 404 on Hermes — feed is deprecated/dead.
+        // Set to null so it does not break the BNB/USD fetch.
+        // The pipeline uses the synthetic $1.00 stablecoin fallback instead.
         pythPriceFeedIdB: null,
       },
     ]

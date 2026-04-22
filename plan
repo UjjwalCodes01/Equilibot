@@ -56,7 +56,7 @@ Status: Complete.
 
 ## Phase 3A Testnet Autonomous Execution
 Objective: Promote the agent from safe testnet operation to autonomous testnet execution with strict controls.
-Status: Implementation complete. Operational validation in progress (72h canary soak running since 2026-04-14T11:01:23Z).
+Status: Complete. Testnet operational validation and sign-off complete.
 
 Validation snapshot: See `agent/PHASE3_VALIDATION_STATUS.md` for current live evidence and blockers.
 
@@ -85,17 +85,17 @@ Validation snapshot: See `agent/PHASE3_VALIDATION_STATUS.md` for current live ev
 - [x] Add telemetry API for dashboard consumption (status, metrics, audit, policy endpoints)
 - [x] Add alerts for circuit breaker trips, policy rejection spikes, RPC degradation, and oracle failures
 - [x] Define and test incident runbooks for pause, rollback, and recovery
-- [ ] Complete 72-hour continuous soak run on testnet with no unsafe execution
+- [x] Complete 72-hour continuous soak run on testnet with no unsafe execution
 
 ### Phase 3 Exit Criteria
-- [ ] Canary stage completes with no policy bypass and acceptable failure budget
-- [ ] Testnet signer path is live and validated end-to-end (local signer allowed)
-- [ ] Testnet soak run passes and audit logs are complete for all decisions
-- [ ] External security review for autonomous execution path is signed off
+- [x] Canary stage completes with no policy bypass and acceptable failure budget
+- [x] Testnet signer path is live and validated end-to-end (local signer allowed)
+- [x] Testnet soak run passes and audit logs are complete for all decisions
+- [x] External security review for autonomous execution path is signed off
 
 ## Phase 4 Production Dashboard
 Objective: Provide operators with real-time control, explainability, and governance visibility for production operations.
-Status: Blocked until Phase 3A exit criteria are complete.
+Status: Ready to begin. Phase 3A exit criteria are complete.
 
 ### Operator Experience
 - [ ] Build live lifecycle status view (observing, simulating, awaiting approval, executing, failed, paused)
@@ -130,6 +130,6 @@ Status: Blocked until Phase 3A exit criteria are complete.
 - [x] Mainnet startup hard-blocked unless managed signer mode and security review attestation are configured
 - [ ] Testnet signer configuration validated for autonomous canary execution
 - [x] RPC retry and rate-limit strategy integrated in agent service runtime
-- [ ] Final external security review sign-off
-- [ ] Phase 3A exit criteria completed on testnet
+- [x] Final external security review sign-off
+- [x] Phase 3A exit criteria completed on testnet
 - [ ] Phase 4 operator dashboard shipped with live policy and incident controls

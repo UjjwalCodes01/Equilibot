@@ -1,13 +1,21 @@
 'use client'
 
 import { Sidebar } from './sidebar'
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { cn } from '@/lib/utils'
 
 export function AppShell({ children }: { children: ReactNode }) {
+  const [collapsed, setCollapsed] = useState(false)
+
   return (
     <div className="flex min-h-screen">
-      <Sidebar />
-      <div className="flex-1 ml-[240px] flex flex-col min-h-screen">
+      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed(!collapsed)} />
+      <div
+        className={cn(
+          'flex-1 flex flex-col min-h-screen transition-all duration-300 ease-out',
+          collapsed ? 'ml-[72px]' : 'ml-[240px]'
+        )}
+      >
         {children}
       </div>
     </div>

@@ -689,6 +689,36 @@ export class AutonomousTaskRunner {
       )
     }
 
+    // ── Stablecoin synthetic price fallback ──────────────────────────────
+    // BUSD, USDT, USDC are always pegged to $1.00.
+    // If both Pyth and the on-chain guard oracle are stale (e.g. BUSD is deprecated),
+    // synthesize a $1.00 price so the pipeline can still run.
+    // exponent=-8 means price is in units of 1e-8 USD → 1.00 USD = 100_000_000
+    const KNOWN_STABLECOINS = new Set(['BUSD', 'USDT', 'USDC', 'DAI'])
+    const SYNTHETIC_STABLE_PRICE: OraclePrice = {
+      price: 100_000_000n, // $1.00 in Pyth exponent=-8 format
+      confidence: 500_000n, // 0.005 USD confidence (~0.5%)
+      exponent: -8,
+      publishTime: Math.floor(Date.now() / 1000),
+      feedId: '0x0000000000000000000000000000000000000000000000000000000000000002' as Hex,
+    }
+
+    if (!oraclePriceB && KNOWN_STABLECOINS.has(pair.tokenB.symbol)) {
+      log.warn(
+        { stage: 'OBSERVE', token: pair.tokenB.symbol },
+        'Using synthetic $1.00 price for stablecoin (Pyth + guard oracle unavailable)'
+      )
+      oraclePriceB = SYNTHETIC_STABLE_PRICE
+    }
+
+    if (!oraclePriceA && KNOWN_STABLECOINS.has(pair.tokenA.symbol)) {
+      log.warn(
+        { stage: 'OBSERVE', token: pair.tokenA.symbol },
+        'Using synthetic $1.00 price for stablecoin (Pyth + guard oracle unavailable)'
+      )
+      oraclePriceA = SYNTHETIC_STABLE_PRICE
+    }
+
     if (!oraclePriceA || !oraclePriceB) {
       const oracleAlert = this.deps.riskMonitor.recordOracleUnavailable(pair.id)
       if (oracleAlert) {

@@ -6,8 +6,7 @@ import { useTriggerTask } from '@/hooks/use-telemetry'
 import { cn } from '@/lib/utils'
 import { motion } from 'framer-motion'
 import { useState, useCallback } from 'react'
-import { Blocks, TrendingUp, ShieldCheck, Zap, ArrowDown, Play, Loader2, Plus, Trash2, Code, ChevronDown } from 'lucide-react'
-import type { AutonomousTaskId } from '@/lib/api/types'
+import { Blocks, TrendingUp, ShieldCheck, Zap, ArrowDown, Play, Loader2, Plus, Trash2, Code, ChevronDown, Sparkles } from 'lucide-react'
 
 interface Block {
   id: string
@@ -47,6 +46,34 @@ export default function StudioPage() {
   ])
   const [showPreview, setShowPreview] = useState(false)
   const { mutate: trigger, isPending } = useTriggerTask()
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
+
+  const handleAiGenerate = useCallback(async () => {
+    if (!aiPrompt.trim() || aiLoading) return
+    setAiLoading(true)
+    setAiError(null)
+
+    try {
+      const res = await fetch('/api/ai/strategy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: aiPrompt }),
+      })
+      const json = await res.json()
+      if (json.blocks) {
+        setBlocks(json.blocks)
+        setAiPrompt('')
+      } else {
+        setAiError(json.error || 'Failed to generate strategy')
+      }
+    } catch {
+      setAiError('AI service unavailable')
+    } finally {
+      setAiLoading(false)
+    }
+  }, [aiPrompt, aiLoading])
 
   const addBlock = useCallback((palette: typeof PALETTE[0]) => {
     setBlocks((prev) => [...prev, { id: Date.now().toString(), type: palette.type, label: palette.label, config: {} }])
@@ -95,6 +122,38 @@ export default function StudioPage() {
           {/* Canvas */}
           <div className="lg:col-span-2 glass-panel p-5">
             <h3 className="text-sm font-semibold text-arctic mb-4">Strategy Blueprint</h3>
+
+            {/* AI Strategy Builder */}
+            <div className="mb-4 p-3 rounded-xl bg-gold-500/5 border border-gold-500/15">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Sparkles className="w-3.5 h-3.5 text-gold-400" />
+                <span className="text-xs font-semibold text-gold-400">AI Strategy Builder</span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAiGenerate()}
+                  placeholder="Describe your strategy in plain English…"
+                  className="flex-1 bg-space-800 border border-glass-border rounded-lg px-3 py-2 text-xs text-arctic outline-none placeholder:text-mist/40 focus:border-gold-500/40 transition-colors"
+                  id="ai-strategy-input"
+                  disabled={aiLoading}
+                />
+                <button
+                  onClick={handleAiGenerate}
+                  disabled={aiLoading || !aiPrompt.trim()}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-r from-gold-500 to-gold-600 text-space-950 text-xs font-semibold hover:from-gold-400 hover:to-gold-500 transition-all disabled:opacity-40"
+                  id="ai-generate-btn"
+                >
+                  {aiLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                  {aiLoading ? 'Generating…' : 'Generate'}
+                </button>
+              </div>
+              {aiError && (
+                <p className="text-[10px] text-rose-glow mt-1.5">{aiError}</p>
+              )}
+            </div>
             <div className="space-y-2 min-h-[400px]">
               {blocks.map((block, i) => {
                 const colors = TYPE_COLORS[block.type]

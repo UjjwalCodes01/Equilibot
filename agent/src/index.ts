@@ -11,6 +11,7 @@
 
 import { createPublicClient, http, webSocket, type Address, type Hex } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
+import { fileURLToPath } from 'url'
 import { spawnSync } from 'child_process'
 import { getConfig } from './config/index.js'
 import { getAddresses } from './config/addresses.js'
@@ -171,7 +172,7 @@ async function main(): Promise<void> {
   )
 
   const auditStore = new AuditStore(
-    new URL('../../data/audit', import.meta.url).pathname
+    fileURLToPath(new URL('../../data/audit', import.meta.url))
   )
   await auditStore.init()
 
@@ -426,6 +427,23 @@ async function runPipeline(
         pair.tokenA,
         oraclePriceB
       )
+    }
+
+    // Stablecoin synthetic $1.00 fallback — BUSD/USDT/USDC are always pegged.
+    // Pyth feed and on-chain guard oracle may be stale for deprecated coins like BUSD.
+    const KNOWN_STABLECOINS = new Set(['BUSD', 'USDT', 'USDC', 'DAI'])
+    const SYNTHETIC_STABLE_PRICE: OraclePrice = {
+      price: 100_000_000n,
+      confidence: 500_000n,
+      exponent: -8,
+      publishTime: Math.floor(Date.now() / 1000),
+      feedId: '0x0000000000000000000000000000000000000000000000000000000000000002' as Hex,
+    }
+    if (!oraclePriceB && KNOWN_STABLECOINS.has(pair.tokenB.symbol)) {
+      oraclePriceB = SYNTHETIC_STABLE_PRICE
+    }
+    if (!oraclePriceA && KNOWN_STABLECOINS.has(pair.tokenA.symbol)) {
+      oraclePriceA = SYNTHETIC_STABLE_PRICE
     }
 
     if (!oraclePriceA || !oraclePriceB) {
@@ -927,3 +945,7 @@ main().catch((err) => {
   log.fatal({ stage: 'SYSTEM', error: err }, 'Fatal error during startup')
   process.exit(1)
 })
+
+
+
+

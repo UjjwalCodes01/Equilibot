@@ -1,0 +1,24 @@
+# Root-level gitignore for the Equilibot monorepo
+
+# Secrets — NEVER commit these
+.env
+.env.local
+.env.*.local
+*.pem
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Data files with potentially sensitive on-chain snapshots
+data/audit/
+data/soak/

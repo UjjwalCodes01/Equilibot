@@ -4,7 +4,8 @@ import { useAuditLog } from '@/hooks/use-telemetry'
 import { timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { Sparkles, Loader2 } from 'lucide-react'
 import type { AuditStage } from '@/lib/api/types'
 
 const STAGE_BADGE: Record<AuditStage, string> = {
@@ -29,12 +30,32 @@ export function ThoughtLog() {
   const { data } = useAuditLog()
   const scrollRef = useRef<HTMLDivElement>(null)
   const entries = data?.entries?.slice().reverse() ?? []
+  const [narrations, setNarrations] = useState<Map<string, { loading: boolean; text: string | null }>>(new Map())
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0
     }
   }, [entries.length])
+
+  const handleNarrate = useCallback(async (key: string, stage: AuditStage, pair: string | null, entryData: Record<string, unknown>) => {
+    // Already cached — don't re-fetch
+    if (narrations.has(key)) return
+
+    setNarrations((prev) => new Map(prev).set(key, { loading: true, text: null }))
+
+    try {
+      const res = await fetch('/api/ai/narrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage, pair, data: entryData }),
+      })
+      const json = await res.json()
+      setNarrations((prev) => new Map(prev).set(key, { loading: false, text: json.narration ?? 'Unable to narrate this event.' }))
+    } catch {
+      setNarrations((prev) => new Map(prev).set(key, { loading: false, text: 'AI narration unavailable.' }))
+    }
+  }, [narrations])
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
@@ -52,10 +73,12 @@ export function ThoughtLog() {
           const badgeClass = STAGE_BADGE[entry.stage] || 'badge-skip'
           const stageLabel = STAGE_LABELS[entry.stage] || entry.stage
           const summary = buildSummary(entry.stage, entry.data)
+          const entryKey = `${entry.timestamp}-${i}`
+          const narration = narrations.get(entryKey)
 
           return (
             <motion.div
-              key={`${entry.timestamp}-${i}`}
+              key={entryKey}
               initial={{ opacity: 0, x: -12 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0 }}
@@ -88,6 +111,37 @@ export function ThoughtLog() {
                   </span>
                 </div>
                 <p className="text-xs text-arctic/80 leading-relaxed">{summary}</p>
+
+                {/* AI Narration */}
+                {!narration && (
+                  <button
+                    onClick={() => handleNarrate(entryKey, entry.stage, entry.pair ?? null, entry.data)}
+                    className="mt-1.5 flex items-center gap-1 text-[10px] text-gold-400/70 hover:text-gold-400 transition-colors"
+                    id={`narrate-${i}`}
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    AI Insight
+                  </button>
+                )}
+                {narration?.loading && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-mist/60">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Thinking…
+                  </div>
+                )}
+                {narration?.text && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-2 px-3 py-2 rounded-lg bg-gold-500/5 border border-gold-500/15"
+                  >
+                    <div className="flex items-center gap-1 mb-1">
+                      <Sparkles className="w-3 h-3 text-gold-400" />
+                      <span className="text-[10px] font-semibold text-gold-400">AI Insight</span>
+                    </div>
+                    <p className="text-[11px] text-arctic/70 leading-relaxed">{narration.text}</p>
+                  </motion.div>
+                )}
               </div>
             </motion.div>
           )

@@ -4,6 +4,7 @@ import { useAgentStatus } from '@/hooks/use-telemetry'
 import { formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Activity, AlertTriangle, Radio, Wifi, WifiOff } from 'lucide-react'
+import { WalletButton } from './wallet-button'
 
 const MODE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   observe: { bg: 'bg-indigo-glow/15', text: 'text-indigo-glow', label: 'Observing' },
@@ -61,6 +62,9 @@ export function Topbar({ title }: { title: string }) {
             {formatDuration(status.uptime)}
           </div>
         )}
+
+        {/* Wallet Button */}
+        <WalletButton />
       </div>
     </header>
   )

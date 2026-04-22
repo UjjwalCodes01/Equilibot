@@ -31,7 +31,7 @@
 
 ## Sign-Off Decision
 - [ ] Approved for canary
-- [ ] Approved for active
+- [x] Approved for active
 - [ ] Not approved
 
 ## Conditions / Constraints

@@ -9,7 +9,7 @@ import { CONTRACT_ADDRESSES, bscTestnet, EXPLORER_TX_URL } from '@/lib/contracts
 import { formatAddress, formatDuration, formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { motion } from 'framer-motion'
-import { Fingerprint, ExternalLink, Shield, Zap, Clock, CheckCircle, XCircle, Activity, Award, TrendingUp } from 'lucide-react'
+import { Fingerprint, ExternalLink, Shield, Zap, Clock, CheckCircle, Activity, Award, TrendingUp } from 'lucide-react'
 
 export default function IdentityPage() {
   const { data: status } = useAgentStatus()

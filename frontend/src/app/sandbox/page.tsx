@@ -4,9 +4,13 @@ import { Topbar } from '@/components/layout/topbar'
 import { PageWrapper } from '@/components/layout/page-wrapper'
 import { cn } from '@/lib/utils'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
-import { FlaskConical, Play, RotateCcw, TrendingUp, TrendingDown, BarChart3, ShieldCheck, Timer, AlertTriangle } from 'lucide-react'
+import { FlaskConical, Play, RotateCcw, TrendingUp, TrendingDown, BarChart3, ShieldCheck, Timer, AlertTriangle, Send, ExternalLink, Wallet, ArrowRight } from 'lucide-react'
+import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useBalance } from 'wagmi'
+import { parseEther, formatEther } from 'viem'
+import { CONTRACT_ADDRESSES, bscTestnet, EXPLORER_TX_URL } from '@/lib/contracts/config'
+import Link from 'next/link'
 
 type SimState = 'idle' | 'running' | 'complete'
 
@@ -55,6 +59,121 @@ function simulateBacktest(days: number, initialCapital: number): SimResult {
   }
 }
 
+function FundTreasuryPanel() {
+  const { isConnected, address } = useAccount()
+  const { data: safeBalance } = useBalance({
+    address: CONTRACT_ADDRESSES.safe,
+    chainId: bscTestnet.id,
+  })
+  const { sendTransaction, data: txHash, isPending: isSending, reset } = useSendTransaction()
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash: txHash,
+  })
+
+  if (!isConnected) {
+    return (
+      <div className="glass-panel p-5 mb-5 border border-dashed border-gold-500/30">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gold-500/10 flex items-center justify-center">
+            <Wallet className="w-5 h-5 text-gold-500" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-arctic">🎯 Judge Demo: Fund Treasury</h3>
+            <p className="text-xs text-mist">Connect your wallet using the button in the top-right corner to interact with the agent</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="glass-panel p-5 mb-5 gradient-border"
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 rounded-xl bg-emerald-glow/10 flex items-center justify-center">
+          <Send className="w-5 h-5 text-emerald-glow" />
+        </div>
+        <div>
+          <h3 className="text-base font-semibold text-arctic">🎯 Judge Demo: Fund Treasury</h3>
+          <p className="text-xs text-mist">Send testnet tBNB to the Gnosis Safe to trigger the agent&apos;s rebalancing logic</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Safe Info */}
+        <div className="glass-panel-sm p-4">
+          <p className="text-[10px] text-mist mb-1">Treasury (Gnosis Safe)</p>
+          <p className="text-xs font-mono text-arctic break-all">{CONTRACT_ADDRESSES.safe}</p>
+          <p className="text-sm font-bold text-gold-400 font-mono mt-2">
+            {safeBalance ? `${parseFloat(formatEther(safeBalance.value)).toFixed(4)} ${safeBalance.symbol}` : '—'}
+          </p>
+        </div>
+
+        {/* Action */}
+        <div className="glass-panel-sm p-4 flex flex-col items-center justify-center gap-3">
+          {!txHash && (
+            <button
+              onClick={() =>
+                sendTransaction({
+                  to: CONTRACT_ADDRESSES.safe,
+                  value: parseEther('0.05'),
+                  chainId: bscTestnet.id,
+                })
+              }
+              disabled={isSending}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-white text-sm font-semibold hover:from-emerald-400 hover:to-emerald-500 transition-all disabled:opacity-40"
+              id="fund-treasury-btn"
+            >
+              <Send className="w-4 h-4" />
+              {isSending ? 'Confirm in MetaMask…' : 'Send 0.05 tBNB → Treasury'}
+            </button>
+          )}
+          {txHash && isConfirming && (
+            <div className="text-center">
+              <div className="w-6 h-6 border-2 border-gold-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+              <p className="text-xs text-mist">Confirming on-chain…</p>
+            </div>
+          )}
+          {txHash && isConfirmed && (
+            <div className="text-center">
+              <p className="text-sm font-semibold text-emerald-glow mb-2">✅ Transaction Confirmed!</p>
+              <a
+                href={`${EXPLORER_TX_URL}${txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-xs text-gold-400 hover:text-gold-300"
+              >
+                View on BscScan <ExternalLink className="w-3 h-3" />
+              </a>
+              <button
+                onClick={() => reset()}
+                className="mt-2 text-[10px] text-mist hover:text-arctic underline"
+              >
+                Send another
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Next Step */}
+        <div className="glass-panel-sm p-4 flex flex-col justify-center">
+          <p className="text-xs text-mist mb-2">After funding, watch the agent react:</p>
+          <Link
+            href="/nexus"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gold-500/10 text-gold-400 text-xs font-medium hover:bg-gold-500/20 transition-colors"
+            id="goto-nexus-link"
+          >
+            Open Agent Thought Stream <ArrowRight className="w-3 h-3" />
+          </Link>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
 export default function SandboxPage() {
   const [strategy, setStrategy] = useState('delta-neutral-rebalance')
   const [days, setDays] = useState(30)
@@ -86,6 +205,9 @@ export default function SandboxPage() {
     <>
       <Topbar title="The Sandbox" />
       <PageWrapper>
+        {/* Interactive Judge Demo: Fund Treasury */}
+        <FundTreasuryPanel />
+
         <div className="glass-panel p-5 mb-5 gradient-border">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-10 h-10 rounded-xl bg-gold-500/10 flex items-center justify-center">
@@ -205,7 +327,7 @@ export default function SandboxPage() {
               <div className="glass-panel p-5">
                 <h3 className="text-sm font-semibold text-arctic mb-4">Portfolio Value Over Time</h3>
                 <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                     <LineChart data={result.data} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                       <XAxis dataKey="day" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} label={{ value: 'Day', fill: '#94a3b8', fontSize: 10, position: 'bottom' }} />
                       <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} domain={['auto', 'auto']} />

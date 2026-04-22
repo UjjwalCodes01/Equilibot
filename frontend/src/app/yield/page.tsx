@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Topbar } from '@/components/layout/topbar'
 import { PageWrapper } from '@/components/layout/page-wrapper'
 import { useTaskStatuses, useTaskProof, useAuditLog, useTriggerTask } from '@/hooks/use-telemetry'
-import { formatDuration, timeAgo, formatNumber } from '@/lib/format'
+import { formatDuration, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { motion } from 'framer-motion'
 import { Sprout, Timer, TrendingUp, Coins, Play, Loader2, ArrowRight, Zap } from 'lucide-react'
@@ -17,10 +17,6 @@ export default function YieldPage() {
 
   const harvestTask = statuses?.tasks?.find((t) => t.taskId === 'yield-harvest-reinvest')
   const proof = proofData?.proof
-
-  const harvestEntries = (audit?.entries ?? []).filter(
-    (e) => e.stage === 'EXECUTION' && e.pair && String(e.data?.status) === 'EXECUTED'
-  )
 
   const [now, setNow] = useState<number | null>(null)
   useEffect(() => {

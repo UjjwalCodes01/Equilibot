@@ -104,7 +104,7 @@ export default function ArbitragePage() {
 
           {/* Bar chart */}
           <div className="h-[200px]">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart data={FEE_TIERS} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                 <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />

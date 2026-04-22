@@ -3,6 +3,7 @@
  */
 
 import { http, createConfig } from 'wagmi'
+import { injected } from 'wagmi/connectors'
 import { type Chain } from 'wagmi/chains'
 
 export const bscTestnet: Chain = {
@@ -36,6 +37,9 @@ export const bscMainnet: Chain = {
 
 export const wagmiConfig = createConfig({
   chains: [bscTestnet, bscMainnet],
+  connectors: [
+    injected(),
+  ],
   transports: {
     [bscTestnet.id]: http(),
     [bscMainnet.id]: http(),
@@ -51,6 +55,7 @@ export const CONTRACT_ADDRESSES = {
 } as const
 
 export const EXPLORER_TX_URL = process.env.NEXT_PUBLIC_BSCSCAN_TX_BASE_URL || 'https://testnet.bscscan.com/tx/'
+export const EXPLORER_ADDRESS_URL = 'https://testnet.bscscan.com/address/'
 
 // Known token addresses
 export const TOKENS = {

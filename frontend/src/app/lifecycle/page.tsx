@@ -6,7 +6,7 @@ import { useTaskStatuses, useTaskProof, useTriggerTask } from '@/hooks/use-telem
 import { cn } from '@/lib/utils'
 import { motion } from 'framer-motion'
 import { timeAgo } from '@/lib/format'
-import { Layers, Flame, Play, Loader2, ShieldCheck, TrendingUp, BarChart3 } from 'lucide-react'
+import { Layers, Flame, Play, Loader2, BarChart3 } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { useState } from 'react'
 
@@ -74,7 +74,7 @@ export default function LifecyclePage() {
               <BarChart3 className="w-4 h-4 text-cyan-glow" /> Position Range Visualizer
             </h3>
             <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <AreaChart data={RANGE_DATA} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
                   <defs>
                     <linearGradient id="gradLiq" x1="0" y1="0" x2="0" y2="1">

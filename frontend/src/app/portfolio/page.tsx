@@ -59,7 +59,7 @@ export default function PortfolioPage() {
           <div className="lg:col-span-2 glass-panel p-5">
             <h3 className="text-sm font-semibold text-arctic mb-4">Treasury Allocation</h3>
             <div className="h-[240px] flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <PieChart>
                   <Pie data={allocData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={4} dataKey="value" strokeWidth={0}>
                     {allocData.map((entry, i) => (
