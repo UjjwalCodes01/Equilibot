@@ -97,7 +97,7 @@ export class GreenfieldUploader {
     // Get the primary storage provider info from the bucket
     const { storageProviders } = await client.sp.getStorageProviders()
     const targetSp = storageProviders.find(
-      (sp) => sp.endpoint === config.spEndpoint
+      (sp: { endpoint?: string; operatorAddress: string }) => sp.endpoint === config.spEndpoint
     ) ?? storageProviders[0]
 
     if (!targetSp) {
