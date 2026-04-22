@@ -89,6 +89,13 @@ const envSchema = z.object({
   TELEMETRY_ALLOWED_ORIGIN: z.string().default('http://localhost:3000'),
   TELEMETRY_API_TOKEN: z.string().min(16).optional(),
 
+  // BNB Greenfield — decentralised audit log mirroring (optional; graceful degradation if not set)
+  GREENFIELD_RPC_URL: z.string().url().optional(),
+  GREENFIELD_PRIVATE_KEY: hexSchema.optional(),
+  GREENFIELD_BUCKET: z.string().min(1).optional(),
+  GREENFIELD_SP_ENDPOINT: z.string().url().optional(),
+  GREENFIELD_CHAIN_ID: z.coerce.number().int().positive().optional(),
+
   // Alerting and runtime health monitoring
   ALERT_WEBHOOK_URL: z.string().url().optional(),
   ALERT_MIN_SEVERITY: z.enum(['info', 'warn', 'error', 'fatal']).default('warn'),

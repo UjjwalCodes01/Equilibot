@@ -560,13 +560,102 @@ export class AutonomousTaskRunner {
       this.deps.balanceService.invalidateAll()
       this.deps.circuitBreaker.recordSuccess()
 
-      const settlement = taskId === 'protocol-buyback-burn'
-        ? {
-            requested: true,
-            status: 'queued',
-            note: 'Burn settlement transfer is encoded in settlementPlan and requires Safe module transfer support to execute atomically on-chain.',
+      let settlement: Record<string, unknown> | null = null
+
+      // ── Protocol Buyback & Burn: execute on-chain burn transfer ────────────
+      // After the swap settles, transfer the bought-back base tokens from the
+      // Safe treasury to the configured burn address via a second Safe module call.
+      if (taskId === 'protocol-buyback-burn') {
+        const burnAddress = this.deps.config.TASK_BURN_ADDRESS
+        const tokenOut = plan.direction === 'BUY_A' ? plan.pair.tokenA : plan.pair.tokenB
+
+        try {
+          // Re-read the actual token balance after the swap to transfer only what was received
+          const boughtBalance = await this.deps.balanceService.getBalance(
+            tokenOut.address,
+            this.deps.getPoolState(plan.pair.poolAddress)?.blockNumber ?? 0n
+          )
+
+          if (boughtBalance > 0n) {
+            // Encode ERC-20 transfer(burnAddress, amount) calldata
+            const { encodeFunctionData } = await import('viem')
+            const transferCalldata = encodeFunctionData({
+              abi: [
+                {
+                  name: 'transfer',
+                  type: 'function',
+                  inputs: [
+                    { name: 'to', type: 'address' },
+                    { name: 'amount', type: 'uint256' },
+                  ],
+                  outputs: [{ type: 'bool' }],
+                },
+              ] as const,
+              functionName: 'transfer',
+              args: [burnAddress as `0x${string}`, boughtBalance],
+            })
+
+            const burnResult = await this.deps.executionService.executeBurnTransfer(
+              tokenOut.address as `0x${string}`,
+              transferCalldata,
+            )
+
+            if (burnResult.status === 'EXECUTED') {
+              this.deps.balanceService.invalidateAll()
+              log.info(
+                {
+                  stage: 'EXECUTE',
+                  taskId,
+                  burnTxHash: burnResult.txHash,
+                  token: tokenOut.symbol,
+                  amount: boughtBalance.toString(),
+                  burnAddress,
+                },
+                `🔥 BURN TRANSFER EXECUTED: ${tokenOut.symbol} → ${burnAddress}`
+              )
+              settlement = {
+                requested: true,
+                status: 'executed',
+                burnTxHash: burnResult.txHash,
+                burnAddress,
+                tokenBurned: tokenOut.symbol,
+                amountBurned: boughtBalance.toString(),
+              }
+            } else {
+              log.warn(
+                {
+                  stage: 'EXECUTE',
+                  taskId,
+                  reason: burnResult.rejectReason,
+                },
+                'Burn transfer failed after successful buyback swap'
+              )
+              settlement = {
+                requested: true,
+                status: 'burn-failed',
+                reason: burnResult.rejectReason ?? 'Burn transfer reverted',
+                burnAddress,
+                tokenBurned: tokenOut.symbol,
+              }
+            }
+          } else {
+            settlement = {
+              requested: true,
+              status: 'burn-skipped',
+              reason: 'Token balance after swap was zero — nothing to burn',
+            }
           }
-        : null
+        } catch (burnError) {
+          const msg = burnError instanceof Error ? burnError.message : 'Unknown burn error'
+          log.warn({ stage: 'EXECUTE', taskId, error: msg }, 'Burn transfer threw unexpectedly')
+          settlement = {
+            requested: true,
+            status: 'burn-error',
+            reason: msg,
+            burnAddress,
+          }
+        }
+      }
 
       return this.createProof(taskId, 'EXECUTED', trigger, plan.message, plan.pair.id, intent.id, {
         ...plan.metadata,

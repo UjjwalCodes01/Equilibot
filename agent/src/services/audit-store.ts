@@ -2,7 +2,9 @@
  * EquiliBot Agent — Audit Store
  *
  * Durably persists every intent, simulation, policy check, and execution
- * result to disk as newline-delimited JSON (NDJSON).
+ * result to disk as newline-delimited JSON (NDJSON) AND mirrors each entry
+ * to BNB Greenfield decentralised storage for immutable, on-chain-adjacent
+ * auditability.
  *
  * This is the "Intent Proof" from the architecture doc:
  * [Market State] + [Reasoning] + [Sim Result] + [Policy Result] + [Execution Result]
@@ -17,6 +19,7 @@ import { readFileSync, statSync, existsSync } from 'fs'
 import { join } from 'path'
 import { keccak256 } from 'viem'
 import { createLogger } from '../utils/logger.js'
+import { type GreenfieldUploader, createGreenfieldUploader } from './greenfield-uploader.js'
 import type {
   RebalanceIntent,
   SimulationResult,
@@ -40,16 +43,29 @@ interface AuditEntry {
 
 export class AuditStore {
   private readonly dataDir: string
+  private readonly greenfield: GreenfieldUploader
   private initialized = false
 
   constructor(dataDir: string) {
     this.dataDir = dataDir
+    // Initialise Greenfield uploader from env vars — gracefully disabled if not configured
+    this.greenfield = createGreenfieldUploader()
   }
 
   async init(): Promise<void> {
     await mkdir(this.dataDir, { recursive: true })
     this.initialized = true
-    log.info({ stage: 'INIT', dataDir: this.dataDir }, 'Audit store initialized')
+    const gfStats = this.greenfield.stats
+    log.info(
+      {
+        stage: 'INIT',
+        dataDir: this.dataDir,
+        greenfieldEnabled: gfStats.configured,
+      },
+      gfStats.configured
+        ? 'Audit store initialized — dual-write to local NDJSON + BNB Greenfield enabled'
+        : 'Audit store initialized — local NDJSON only (set GREENFIELD_* env vars to enable decentralised mirroring)'
+    )
   }
 
   /** Record a skipped opportunity with reason */
@@ -221,6 +237,8 @@ export class AuditStore {
 
     try {
       await appendFile(filePath, JSON.stringify(entry) + '\n', 'utf-8')
+      // Mirror to BNB Greenfield — fire-and-forget, never blocks local write path
+      this.greenfield.uploadAsync(entry)
     } catch (error) {
       log.error(
         { stage: 'SYSTEM', error, filePath },

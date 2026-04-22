@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { callGemini } from '@/lib/gemini'
+import { requireApiToken } from '@/lib/api-auth'
+import { checkRateLimit } from '@/lib/rate-limiter'
 
 export async function POST(req: NextRequest) {
+  const authError = requireApiToken(req)
+  if (authError) return authError
+  const rateLimitError = checkRateLimit(req)
+  if (rateLimitError) return rateLimitError
+
   try {
     const body = await req.json()
     const { stage, pair, data } = body as {

@@ -4,7 +4,14 @@
 .env
 .env.local
 .env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
 *.pem
+# Foundry/contracts env (contains private keys)
+contracts/.env
+contracts/.env.testnet
+contracts/.env.mainnet
 
 # OS artifacts
 .DS_Store
@@ -19,6 +26,16 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Build outputs
+frontend/.next/
+frontend/out/
+agent/dist/
+contracts/out/
+contracts/cache/
+
 # Data files with potentially sensitive on-chain snapshots
 data/audit/
 data/soak/
+
+# Stale build artefacts (Next.js route manifest, etc.)
+frontend/app/

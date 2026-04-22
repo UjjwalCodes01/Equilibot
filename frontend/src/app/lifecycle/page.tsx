@@ -10,29 +10,90 @@ import { Layers, Flame, Play, Loader2, BarChart3 } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, ReferenceLine } from 'recharts'
 import { useState } from 'react'
 
+import { useEffect } from 'react'
+
 const STRATEGIES = [
   { id: 'full-range', label: 'Full Range', desc: 'Maximum coverage, lowest concentration. Ideal for low-volatility stable pairs.', risk: 'Low', color: 'text-emerald-glow', bg: 'bg-emerald-glow/10' },
   { id: 'active-support', label: 'Active Support', desc: 'Tight range around current price. Higher fees, requires monitoring.', risk: 'Medium', color: 'text-amber-glow', bg: 'bg-amber-glow/10' },
   { id: 'volatility-buffer', label: 'Volatility Buffer', desc: 'Asymmetric range biased for downside protection. Best during uncertainty.', risk: 'High', color: 'text-rose-glow', bg: 'bg-rose-glow/10' },
 ]
 
-// Generate mock price range data for visualization
-const RANGE_DATA = Array.from({ length: 60 }, (_, i) => {
-  const x = (i - 30) / 10
-  return {
-    price: (300 + i * 2).toString(),
-    liquidity: Math.max(0, 80 * Math.exp(-x * x / 2)),
-  }
-})
+interface RangePoint { price: string; liquidity: number }
+
+function usePoolRangeData(): { data: RangePoint[]; isLive: boolean } {
+  const [data, setData] = useState<RangePoint[]>([])
+  const [isLive, setIsLive] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function fetchRange() {
+      try {
+        const res = await fetch('http://localhost:9100/pool-state', {
+          signal: AbortSignal.timeout(3000),
+        })
+        if (!res.ok) throw new Error('not ok')
+        const json = await res.json() as {
+          sqrtPriceX96?: string
+          tick?: number
+          tickSpacing?: number
+          ticks?: Array<{ tick: number; liquidityNet: string }>
+        }
+
+        if (!json.tick || !json.ticks?.length) throw new Error('no tick data')
+
+        const currentTick = json.tick
+        const tickSpacing = json.tickSpacing ?? 10
+
+        // Build liquidity distribution from tick data
+        const tickMap = new Map<number, number>()
+        let runningLiq = 0
+        const sortedTicks = [...json.ticks].sort((a, b) => a.tick - b.tick)
+        for (const t of sortedTicks) {
+          runningLiq += Number(t.liquidityNet) / 1e12
+          tickMap.set(t.tick, Math.abs(runningLiq))
+        }
+
+        // Generate price points across ±30 tick spacings from current
+        const points: RangePoint[] = []
+        for (let i = -30; i <= 30; i++) {
+          const tick = currentTick + i * tickSpacing
+          const price = (1.0001 ** tick).toFixed(4)
+          const liq = tickMap.get(tick) ?? 0
+          points.push({ price, liquidity: liq })
+        }
+
+        if (!cancelled) {
+          setData(points)
+          setIsLive(true)
+        }
+      } catch {
+        // Agent offline — leave data empty, show placeholder
+        if (!cancelled) {
+          setData([])
+          setIsLive(false)
+        }
+      }
+    }
+
+    void fetchRange()
+    const interval = setInterval(() => { void fetchRange() }, 30_000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [])
+
+  return { data, isLive }
+}
 
 export default function LifecyclePage() {
   const [selectedStrategy, setSelectedStrategy] = useState('active-support')
   const { data: statuses } = useTaskStatuses()
   const { data: buybackProof } = useTaskProof('protocol-buyback-burn')
   const { mutate: trigger, isPending } = useTriggerTask()
+  const { data: rangeData, isLive: rangeIsLive } = usePoolRangeData()
 
   const buybackTask = statuses?.tasks?.find((t) => t.taskId === 'protocol-buyback-burn')
   const proof = buybackProof?.proof
+  const currentPricePoint = rangeData[Math.floor(rangeData.length / 2)]?.price ?? '0'
 
   return (
     <>
@@ -72,22 +133,33 @@ export default function LifecyclePage() {
           <div className="lg:col-span-3 glass-panel p-5">
             <h3 className="text-sm font-semibold text-arctic mb-4 flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-cyan-glow" /> Position Range Visualizer
+              {rangeIsLive
+                ? <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-emerald-glow/10 text-emerald-glow">● Live</span>
+                : <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-amber-glow/10 text-amber-glow">Agent offline</span>
+              }
             </h3>
             <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <AreaChart data={RANGE_DATA} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
-                  <defs>
-                    <linearGradient id="gradLiq" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#d4a843" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#d4a843" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="price" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} interval={9} />
-                  <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <ReferenceLine x="360" stroke="#22d3ee" strokeDasharray="4 4" label={{ value: 'Current', fill: '#22d3ee', fontSize: 10, position: 'top' }} />
-                  <Area type="monotone" dataKey="liquidity" stroke="#d4a843" fill="url(#gradLiq)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
+              {rangeData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                  <AreaChart data={rangeData} margin={{ top: 4, right: 4, bottom: 0, left: -20 }}>
+                    <defs>
+                      <linearGradient id="gradLiq" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#d4a843" stopOpacity={0.3} />
+                        <stop offset="95%" stopColor="#d4a843" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis dataKey="price" tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} interval={9} />
+                    <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <ReferenceLine x={currentPricePoint} stroke="#22d3ee" strokeDasharray="4 4" label={{ value: 'Current', fill: '#22d3ee', fontSize: 10, position: 'top' }} />
+                    <Area type="monotone" dataKey="liquidity" stroke="#d4a843" fill="url(#gradLiq)" strokeWidth={2} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center gap-2">
+                  <p className="text-xs text-mist/60">Connect the agent to view live pool tick distribution</p>
+                  <p className="text-[10px] font-mono text-mist/40">localhost:9100/pool-state</p>
+                </div>
+              )}
             </div>
             <div className="flex items-center justify-center gap-6 mt-3 text-xs text-mist">
               <div className="flex items-center gap-1.5">

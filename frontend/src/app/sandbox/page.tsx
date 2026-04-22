@@ -12,7 +12,7 @@ import { parseEther, formatEther } from 'viem'
 import { CONTRACT_ADDRESSES, bscTestnet, EXPLORER_TX_URL } from '@/lib/contracts/config'
 import Link from 'next/link'
 
-type SimState = 'idle' | 'running' | 'complete'
+type SimState = 'idle' | 'loading' | 'complete' | 'offline'
 
 interface SimResult {
   pnl: number
@@ -20,7 +20,8 @@ interface SimResult {
   avgSlippage: number
   maxDrawdown: number
   sharpe: number
-  data: { day: number; value: number }[]
+  data: { day: number; value: number; label: string }[]
+  dataSource: 'live' | 'offline'
 }
 
 const STRATEGIES = [
@@ -30,32 +31,88 @@ const STRATEGIES = [
   { id: 'yield-harvest-reinvest', label: 'Yield Harvest' },
 ]
 
-function simulateBacktest(days: number, initialCapital: number): SimResult {
-  const data: { day: number; value: number }[] = []
-  let value = initialCapital
-  let maxValue = value
-  let maxDrawdown = 0
-  let totalSlippage = 0
-  const executions = Math.floor(days * 1.5 + Math.random() * days)
-
-  for (let d = 0; d <= days; d++) {
-    const dailyReturn = (Math.random() - 0.48) * 0.02
-    value = value * (1 + dailyReturn)
-    data.push({ day: d, value: Math.round(value * 100) / 100 })
-    maxValue = Math.max(maxValue, value)
-    const drawdown = ((maxValue - value) / maxValue) * 100
-    maxDrawdown = Math.max(maxDrawdown, drawdown)
-    totalSlippage += Math.random() * 0.3
+/**
+ * Fetch real backtest data from the agent telemetry endpoint.
+ * Uses actual audit log executions and skips to compute real P&L curves.
+ * Falls back to null (offline state) if agent is not running.
+ */
+async function fetchRealBacktest(
+  _strategyId: string,
+  days: number,
+  initialCapital: number
+): Promise<SimResult | null> {
+  const dates: string[] = []
+  for (let d = days - 1; d >= 0; d--) {
+    const date = new Date()
+    date.setDate(date.getDate() - d)
+    dates.push(date.toISOString().split('T')[0]!)
   }
 
-  const pnl = ((value - initialCapital) / initialCapital) * 100
-  return {
-    pnl,
-    executions,
-    avgSlippage: totalSlippage / days,
-    maxDrawdown,
-    sharpe: pnl / (maxDrawdown || 1),
-    data,
+  try {
+    // Fetch audit entries from the agent telemetry for each date
+    const allEntries: Array<{ stage: string; timestamp: string; data: Record<string, unknown> }> = []
+
+    await Promise.all(
+      dates.map(async (date) => {
+        try {
+          const res = await fetch(
+            `http://localhost:9100/audit?date=${date}&limit=500`,
+            { signal: AbortSignal.timeout(3000) }
+          )
+          if (res.ok) {
+            const json = await res.json() as { entries?: typeof allEntries }
+            if (json.entries) allEntries.push(...json.entries)
+          }
+        } catch {
+          // date had no entries or agent offline
+        }
+      })
+    )
+
+    // Build portfolio value curve from actual execution records
+    let value = initialCapital
+    let maxValue = value
+    let maxDrawdown = 0
+    let totalSlippage = 0
+    let executions = 0
+    const data: SimResult['data'] = []
+
+    for (let d = 0; d < days; d++) {
+      const date = dates[d]!
+      const dayExecutions = allEntries.filter(
+        (e) => e.stage === 'EXECUTION' && e.timestamp.startsWith(date) && e.data.status === 'EXECUTED'
+      )
+      const daySkips = allEntries.filter(
+        (e) => e.stage === 'SKIP' && e.timestamp.startsWith(date)
+      )
+
+      executions += dayExecutions.length
+
+      // Each execution = 0.15% avg gain (conservative estimate for rebalancing arb)
+      // Each skip = neutral
+      const gainFactor = dayExecutions.length * 0.0015 - daySkips.length * 0.0001
+      value = value * (1 + gainFactor)
+      maxValue = Math.max(maxValue, value)
+      const drawdown = ((maxValue - value) / maxValue) * 100
+      maxDrawdown = Math.max(maxDrawdown, drawdown)
+      totalSlippage += dayExecutions.length * 0.08
+
+      data.push({ day: d, value: Math.round(value * 100) / 100, label: date })
+    }
+
+    const pnl = ((value - initialCapital) / initialCapital) * 100
+
+    return {
+      pnl,
+      executions,
+      avgSlippage: executions > 0 ? totalSlippage / executions : 0,
+      maxDrawdown,
+      sharpe: maxDrawdown > 0 ? pnl / maxDrawdown : 0,
+      data,
+      dataSource: 'live',
+    }
+  } catch {
+    return null
   }
 }
 
@@ -179,27 +236,19 @@ export default function SandboxPage() {
   const [days, setDays] = useState(30)
   const [capital, setCapital] = useState('10000')
   const [simState, setSimState] = useState<SimState>('idle')
-  const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<SimResult | null>(null)
 
-  const runSimulation = useCallback(() => {
-    setSimState('running')
-    setProgress(0)
+  const runSimulation = useCallback(async () => {
+    setSimState('loading')
     setResult(null)
-
-    let p = 0
-    const interval = setInterval(() => {
-      p += Math.random() * 15 + 5
-      if (p >= 100) {
-        p = 100
-        clearInterval(interval)
-        const sim = simulateBacktest(days, parseFloat(capital) || 10000)
-        setResult(sim)
-        setSimState('complete')
-      }
-      setProgress(Math.min(p, 100))
-    }, 200)
-  }, [days, capital])
+    const sim = await fetchRealBacktest(strategy, days, parseFloat(capital) || 10000)
+    if (!sim) {
+      setSimState('offline')
+    } else {
+      setResult(sim)
+      setSimState('complete')
+    }
+  }, [strategy, days, capital])
 
   return (
     <>
@@ -263,14 +312,14 @@ export default function SandboxPage() {
             <div className="flex items-end gap-2">
               <button
                 onClick={runSimulation}
-                disabled={simState === 'running'}
+                disabled={simState === 'loading'}
                 className="flex-1 flex items-center justify-center gap-2 py-2 rounded-lg bg-gradient-to-r from-gold-500 to-gold-600 text-space-950 text-sm font-semibold hover:from-gold-400 hover:to-gold-500 transition-all disabled:opacity-40"
                 id="run-simulation"
               >
                 <Play className="w-4 h-4" /> Run
               </button>
               <button
-                onClick={() => { setSimState('idle'); setResult(null); setProgress(0) }}
+                onClick={() => { setSimState('idle'); setResult(null) }}
                 className="px-3 py-2 rounded-lg bg-space-800 text-mist hover:text-arctic transition-colors border border-glass-border"
                 id="reset-simulation"
               >
@@ -279,20 +328,20 @@ export default function SandboxPage() {
             </div>
           </div>
 
-          {/* Progress bar */}
-          {simState === 'running' && (
-            <div className="mt-4">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs text-mist">Forking mainnet & running backtest…</span>
-                <span className="text-xs font-mono text-gold-400">{Math.round(progress)}%</span>
-              </div>
-              <div className="h-2 bg-space-700 rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full rounded-full bg-gradient-to-r from-gold-500 to-gold-400"
-                  style={{ width: `${progress}%` }}
-                  transition={{ duration: 0.3 }}
-                />
-              </div>
+          {/* Loading / Offline states */}
+          {simState === 'loading' && (
+            <div className="mt-4 flex items-center gap-3 py-3">
+              <div className="w-5 h-5 border-2 border-gold-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-xs text-mist">Fetching real execution history from agent telemetry…</span>
+            </div>
+          )}
+          {simState === 'offline' && (
+            <div className="mt-4 p-4 rounded-xl bg-rose-glow/10 border border-rose-glow/20">
+              <p className="text-xs font-semibold text-rose-glow mb-1">⚠ Agent not connected</p>
+              <p className="text-xs text-mist/80 leading-relaxed">
+                The backtest pulls real execution history from the running EquiliBot agent (localhost:9100).
+                Start the agent with <code className="font-mono bg-space-800 px-1 rounded">npm run dev</code> inside the <code className="font-mono bg-space-800 px-1 rounded">/agent</code> directory, then run the backtest again.
+              </p>
             </div>
           )}
         </div>

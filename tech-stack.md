@@ -1,48 +1,52 @@
 # 🛠 EquiliBot Technical Stack & Infrastructure
 
-EquiliBot is built on a high-performance, decentralized AI architecture tailored for the BNB Chain ecosystem. Our stack prioritizes **autonomous execution**, **cryptographic security**, and **mathematical precision**.
+EquiliBot is built on a high-performance, security-first autonomous agent architecture tailored for the BNB Chain ecosystem. Our stack prioritizes **autonomous execution**, **cryptographic security**, and **mathematical precision**.
 
 ---
 
 ## 🏗 Core Frameworks
-* **Agent Orchestration:** [ElizaOS](https://github.com/ai16z/eliza) (2026 Edition)
-    * *Why:* Industry-standard for agentic workflows with native support for BAP-578 (Non-Fungible Agents) and BNB Chain plugins.
+
+* **Agent Orchestration:** Custom TypeScript Autonomous Agent (Node.js ESM)
+    * *Why:* Fully deterministic Observe → Calculate → Verify → Execute loop with explicit policy gates. No framework magic — every decision is traceable.
 * **Web Framework:** [Next.js 14+](https://nextjs.org/) (App Router)
-    * *Why:* Server-side rendering for real-time liquidity data and a seamless "Command Center" UI.
+    * *Why:* Server-side rendering for real-time telemetry data and a seamless operator dashboard UI.
 * **Language:** [TypeScript](https://www.typescriptlang.org/)
-    * *Why:* Ensures end-to-end type safety between the agent logic and on-chain interactions.
+    * *Why:* End-to-end type safety between agent logic, on-chain ABI interactions, and the frontend.
 
 ## 🔗 Blockchain & Smart Contracts
+
 * **Development Environment:** [Foundry](https://book.getfoundry.sh/) (Forge/Anvil)
-    * *Why:* Enables high-speed fuzz testing and local fork-simulations of the BNB Chain mainnet.
+    * *Why:* High-speed fuzz testing and local fork-simulations of the BSC mainnet.
 * **Account Abstraction:** [Safe{Core} SDK](https://docs.safe.global/)
-    * *Why:* Provides the multi-sig infrastructure for the EquiliBot Executive Module, ensuring non-custodial asset management.
-* **Protocol Standards:**
-    * **BAP-578:** Utilizing the Non-Fungible Agent (NFA) standard for verifiable on-chain identity.
-    * **ERC-4337:** For gasless transaction batching and session keys.
+    * *Why:* Multi-sig infrastructure for the EquiliBot Executive Module, ensuring non-custodial, policy-gated asset management.
 * **Web3 Library:** [Viem](https://viem.sh/) & [Wagmi](https://wagmi.sh/)
-    * *Why:* Lightweight, type-safe alternatives to ethers.js optimized for modern BNB Chain sub-cent gas environments.
+    * *Why:* Lightweight, type-safe, optimised for modern BNB Chain sub-cent gas environments.
 
 ## 🧠 AI & Intelligence Layer
-* **Primary LLM:** Claude 3.5 Sonnet / Llama 3 (Self-hosted)
-    * *Why:* Superior reasoning capabilities for complex financial rebalancing and $x \cdot y = k$ invariant math.
-* **Data Aggregator:** Custom-built subgraphs using [The Graph](https://thegraph.com/) for real-time monitoring of PancakeSwap V3 and BiSwap liquidity reserves.
-* **Simulation Engine:** [Tenderly](https://tenderly.co/)
-    * *Why:* To "dry-run" every autonomous swap for MEV protection and slippage verification before execution.
+
+* **Primary LLM:** Google Gemini (`gemini-2.0-flash`)
+    * *Why:* Low-latency reasoning for trade narration, DAO explainability, and strategy blueprint generation via the Strategy Studio.
+* **AI API Security:** Bearer token auth + per-IP rate limiting on all AI endpoints
+    * *Why:* Prevents quota abuse and unauthorized access to internal Gemini calls.
 
 ## 📊 Integrations & Tools
-* **DEXs:** PancakeSwap V3, BiSwap, ApeSwap.
+
+* **DEXs:** PancakeSwap V3
 * **Oracles:** [Pyth Network](https://pyth.network/)
-    * *Why:* Low-latency, high-fidelity price feeds required for sub-second rebalancing decisions.
-* **Storage:** [BNB Greenfield](https://greenfield.bnbchain.org/)
-    * *Why:* Decentrally storing the Agent's "Audit Logs" to ensure every trade is transparent and verifiable by the DAO.
+    * *Why:* Low-latency, high-fidelity price feeds required for sub-second rebalancing decisions. Stablecoin synthetic fallback (`$1.00`) implemented for testnet BUSD/USDT staleness resilience.
+* **Decentralised Audit Storage:** [BNB Greenfield](https://greenfield.bnbchain.org/)
+    * *Why:* Every audit log entry (intent → policy → simulation → execution) is dual-written to BNB Greenfield for immutable, decentralised audit trails. Local NDJSON is the primary read path; Greenfield is the on-chain-adjacent mirror.
+* **Signing:** Local private key (testnet) / AWS KMS (mainnet via `SIGNER_MODE=managed`)
 
 ---
 
 ## ⚡ Performance Summary
+
 | Category | Tooling |
 | :--- | :--- |
-| **Network** | BNB Chain (Mainnet/Testnet) |
+| **Network** | BNB Chain Testnet (Chain ID 97) / Mainnet (Chain ID 56) |
 | **Agent Loops** | Observe → Calculate → Verify → Execute |
-| **Security** | Formal Verification via Foundry + Safe Modules |
-| **Communication** | Secure RPCs via QuickNode / Ankr |
+| **Security** | Foundry fuzz tests + Safe Modules + SwapGuard policy enforcement |
+| **Communication** | BSC public RPC (testnet) / QuickNode private RPC (production) |
+| **Audit Trail** | Local NDJSON + BNB Greenfield decentralised mirror |
+| **AI Auth** | Bearer token + IP rate limiting (10 req/min) |

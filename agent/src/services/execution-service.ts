@@ -272,6 +272,63 @@ export class ExecutionService {
     })
   }
 
+  /**
+   * Execute a burn transfer directly through the Safe module.
+   * Used after a buyback swap to send received tokens to the burn address.
+   * Calls execTransactionFromModule on the Safe (NOT executeSwap on EquiliBotModule).
+   */
+  async executeBurnTransfer(
+    tokenAddress: Address,
+    transferCalldata: Hex,
+  ): Promise<Pick<ExecutionRecord, 'status' | 'txHash' | 'rejectReason'>> {
+    try {
+      const chain = this.chainId === 56 ? bsc : bscTestnet
+      const walletClient = createWalletClient({
+        chain,
+        transport: http(this.rpcHttpUrl),
+        account: this.getLocalSignerAccount(),
+      })
+
+      const safeExecAbi = [
+        {
+          name: 'execTransactionFromModule',
+          type: 'function',
+          inputs: [
+            { name: 'to', type: 'address' },
+            { name: 'value', type: 'uint256' },
+            { name: 'data', type: 'bytes' },
+            { name: 'operation', type: 'uint8' },
+          ],
+          outputs: [{ name: 'success', type: 'bool' }],
+        },
+      ] as const
+
+      const txHash = await walletClient.writeContract({
+        address: this.moduleAddress,
+        abi: safeExecAbi,
+        functionName: 'execTransactionFromModule',
+        args: [tokenAddress, 0n, transferCalldata, 0],
+      })
+
+      log.info({ stage: 'EXECUTE', txHash, token: tokenAddress }, 'Burn transfer submitted')
+
+      const receipt = await this.publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: TX_CONFIRMATION_TIMEOUT_MS,
+      })
+
+      if (receipt.status === 'success') {
+        return { status: 'EXECUTED', txHash, rejectReason: null }
+      }
+
+      return { status: 'FAILED', txHash, rejectReason: 'Burn transfer reverted on-chain' }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown burn transfer error'
+      log.error({ stage: 'EXECUTE', error }, `Burn transfer failed: ${reason}`)
+      return { status: 'FAILED', txHash: null, rejectReason: reason }
+    }
+  }
+
   private getLocalSignerAccount(): PrivateKeyAccount {
     if (this.signer.mode !== 'local') {
       throw new Error('Local signer account requested while signer mode is managed')
