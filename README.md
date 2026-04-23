@@ -1,7 +1,6 @@
 # EquiliBot — Autonomous DeFAI Treasury Agent
 
 **Live Demo:** [equilibot.vercel.app](https://equilibot.vercel.app)  
-**Agent API:** [equilibot.onrender.com](https://equilibot.onrender.com)
 
 EquiliBot is an autonomous, on-chain treasury management agent built for the BNB Smart Chain. It continuously monitors a Gnosis Safe treasury, detects portfolio drift, and autonomously executes delta-neutral rebalancing strategies through a cryptographically guarded smart contract pipeline — all with complete on-chain auditability.
 
